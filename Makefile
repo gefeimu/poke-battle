@@ -16,6 +16,7 @@
 #   make readme-images   重出 README 配图（docs/img/）
 #   make screen-preview  把固件渲染层画的战斗界面导成 PNG 肉眼验收
 #   make render-compare  比对「固件渲染」与「PC 预览」的同一屏
+#   make play       在 PC 上开窗口试玩（Windows 专用，键盘映射三个键）
 #   make clean      清理
 
 # 注意：用 override 而不是 ?=。本机环境的 CC 变量被设成了 "cc"
@@ -76,7 +77,7 @@ TESTS = data_selfcheck test_calc test_battle test_ai test_sprites test_font \
 
 .PHONY: all test check-consistency bench types sprites sprites-preview \
         font lvgl-font lvgl-font-to-c font-preview readme-images \
-        screen-preview render-compare clean
+        screen-preview render-compare play play-check clean
 
 all: $(BUILD)
 
@@ -228,6 +229,27 @@ render-compare: screen-preview readme-images
 	python tools/compare_screen.py --c data/screen_preview/battle.ppm \
 	  --py docs/img/hero.png --scale 3 \
 	  --heatmap data/screen_preview/diff.png
+
+# PC 试玩窗口（Windows 专用：GDI 贴 16bpp 帧缓冲）。
+# 为什么要有它：断言能证明逻辑对，但**证明不了「好不好玩」** —— 招式菜单
+# 四个格子够不够看、日志一条条放会不会太慢、长按返回的手感对不对，只能上手。
+# 它与固件是同一份源码、同一条链路，只有最后一跳不同（固件送 SPI，这里送 GDI）。
+# 三个键走**真实的 ADC 电压模拟**（每模拟毫秒喂一次 key_poll），不是直接喂
+# 事件 —— 所以键位锁 / 40ms 按压确认 / 500ms 长按 / 按住连发都是真在跑。
+PLAY_LIBS = -lgdi32 -luser32
+
+$(BUILD)/play_pc: test/play_pc.c $(SCREEN_SRC) | $(BUILD)
+	$(CC) $(CFLAGS) $(INC) -o $@ $< $(SCREEN_SRC) $(PLAY_LIBS)
+
+# --frames N 画够 N 帧就退出，用来做「窗口能起来、消息循环能跑」的冒烟自检
+play: $(BUILD)/play_pc
+	$(BUILD)/play_pc
+
+# PC 试玩链路的**无窗口**自检：键盘 → ADC 电压 → 驱动 → 会话。
+# **刻意不进 `make test`**：这个二进制依赖 GDI/User32，而那十个测试都不依赖
+# 任何平台 API —— 不能为了它把整条测试链染上平台限制。
+play-check: $(BUILD)/play_pc
+	$(BUILD)/play_pc --selfcheck
 
 # SPRITES_SRC 在命令行给，例如：
 #   make sprites SPRITES_SRC=/d/Download/Chromedownload/sprites/sprites/pokemon/versions
