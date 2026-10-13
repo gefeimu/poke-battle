@@ -149,7 +149,8 @@ def main():
     # ---- 9. README 测试计数 ----
     print("\n[9] README 测试计数")
     counts = [("data_selfcheck", 83), ("test_calc", 83), ("test_battle", 100),
-              ("test_ai", 19), ("test_sprites", 14), ("test_font", 25)]
+              ("test_ai", 19), ("test_sprites", 14), ("test_font", 25),
+              ("test_render", 79)]
     for name, n in counts:
         check(f"{n} 项" in rd, f"README 记录 {name} = {n} 项")
 
@@ -204,6 +205,87 @@ def main():
     gg = read("tools/gen_gen3_data.py")
     check("zh_names" in gg, "主生成器导入 zh_names")
     check("load_names" in gg, "主生成器调用 load_names")
+
+    # ---- 12. 渲染层版式与 PC 预览一致 ----
+    #
+    # 界面现在有**两套独立实现**：固件侧 src/poke_ui.c，PC 侧
+    # tools/make_readme_images.py（README 配图）。它们必须用同一份版式
+    # 数值，否则「预览图好看、固件里错位」这种问题永远发现不了 ——
+    # 而且 make render-compare 的比对会直接失败。
+    #
+    # 实际已经因此踩过一次：状态行的文字坐标一边写成相对偏移、一边是绝对
+    # 坐标，差 4px；招式选中格的 bbox 一边含端点一边不含，差 1px。
+    print("\n[12] 渲染层版式与 PC 预览一致")
+    # 屏幕尺寸在 .h 里，其余版式常量在 .c 里
+    ui = read("src/poke_ui.c") + read("src/poke_ui.h")
+    mk = read("tools/make_readme_images.py")
+
+    def macro(text, name):
+        m = re.search(rf"#define\s+{name}\s+(-?\d+)", text)
+        return int(m.group(1)) if m else None
+
+    def pyvar(text, name):
+        """
+        取 Python 模块级整数常量的值。
+
+        要支持 `A, B = 240, 320` 这种一行赋多值的写法（屏幕尺寸就是这么写的）。
+        注意必须**遍历所有匹配**去找包含目标名的那一条 —— 用 search 只会拿到
+        文件里第一个 `NAME = 数字`，匹配不到多值行，然后静默返回 None。
+        """
+        pat = (r"^\s*([A-Z_]+(?:\s*,\s*[A-Z_]+)*)\s*=\s*"
+               r"(-?\d+(?:\s*,\s*-?\d+)*)")
+        for m in re.finditer(pat, text, re.M):
+            names = [x.strip() for x in m.group(1).split(",")]
+            vals = [int(x.strip()) for x in m.group(2).split(",")]
+            if name in names and len(names) == len(vals):
+                return vals[names.index(name)]
+        return None
+
+    pairs = [("UI_SCREEN_W", "SCREEN_W"), ("UI_SCREEN_H", "SCREEN_H"),
+             ("HB_INSET", "HP_INSET"), ("HP_ROW_H", "HP_ROW_H")]
+    for c_name, py_name in pairs:
+        cv, pv = macro(ui, c_name), pyvar(mk, py_name)
+        check(cv is not None and cv == pv,
+              f"{c_name}(C) = {cv} 与 {py_name}(PC) = {pv} 一致")
+
+    for c_name, val in [("HB_FOE_W", 128), ("HB_FOE_H", 32),
+                        ("HB_ME_W", 128), ("HB_ME_H", 44)]:
+        check(macro(ui, c_name) == val, f"{c_name} = {val}")
+        check(str(val) in mk, f"PC 预览里也出现 {val}（血条框尺寸）")
+
+    # ---- 13. 字体数据与源 .c 的度量一致 ----
+    #
+    # gen/poke_font_data.c 是从 lv_font_conv 的输出转来的。转换器如果读错
+    # line_height / base_line，字形会整体上下偏移 —— 而两份文件各自都
+    # 「自洽」，只有对起来才能发现。
+    print("\n[13] 字体数据与 LVGL 源文件一致")
+    fd = read("gen/poke_font_data.c")
+    for lvgl_file, ident in [("gen/font_app_16.c", "kFontApp16"),
+                             ("gen/font_app_12.c", "kFontApp12"),
+                             ("gen/font_hp_10.c", "kFontHp10")]:
+        src = read(lvgl_file)
+        m_lh = re.search(r"\.line_height\s*=\s*(\d+)", src)
+        m_bl = re.search(r"\.base_line\s*=\s*(-?\d+)", src)
+        m_gl = re.search(r"\.bpp\s*=\s*(\d+)", src)
+        if not (m_lh and m_bl and m_gl):
+            check(False, f"{lvgl_file} 里找不到度量")
+            continue
+        lh, bl, bpp = int(m_lh.group(1)), int(m_bl.group(1)), int(m_gl.group(1))
+        # 生成的结构体形如： "font_app_16", 4, 21, 5,
+        m = re.search(rf'"{Path(lvgl_file).stem}",\s*(\d+),\s*(\d+),\s*(-?\d+)',
+                      fd)
+        if not m:
+            check(False, f"{ident} 在 gen/poke_font_data.c 里找不到")
+            continue
+        g_bpp, g_lh, g_bl = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        check(g_bpp == bpp and g_lh == lh and g_bl == bl,
+              f"{ident} 的 bpp/line_height/base_line = "
+              f"{g_bpp}/{g_lh}/{g_bl}，源文件是 {bpp}/{lh}/{bl}")
+
+    # 三套字体都得在数据文件里
+    for ident in ("kFontApp16", "kFontApp12", "kFontHp10"):
+        check(f"const BitmapFont {ident} =" in fd,
+              f"gen/poke_font_data.c 导出了 {ident}")
 
     print(f"\n=== 结果: {g_fail} 处不一致 ===")
     return 0 if g_fail == 0 else 1

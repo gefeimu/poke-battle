@@ -14,6 +14,8 @@
 #   make lvgl-font       重新生成 LVGL 4bpp 字库（需指定 FONT 字体路径）
 #   make font-preview    把自制字库渲染成图片，肉眼检查字形
 #   make readme-images   重出 README 配图（docs/img/）
+#   make screen-preview  把固件渲染层画的战斗界面导成 PNG 肉眼验收
+#   make render-compare  比对「固件渲染」与「PC 预览」的同一屏
 #   make clean      清理
 
 # 注意：用 override 而不是 ?=。本机环境的 CC 变量被设成了 "cc"
@@ -38,11 +40,18 @@ SRC = src/poke_battle.c src/poke_ability.c src/poke_item.c src/poke_calc.c \
 # AI 相关的测试/基准额外链接 AI 模块
 SRC_AI = $(SRC) src/poke_ai.c
 
+# 渲染层：**不依赖战斗引擎**，只吃精灵图数据与字体数据。
+# 所以渲染相关的测试/工具都能单独编译、单独跑。
+RENDER_SRC = src/poke_render.c src/poke_font.c src/poke_ui.c \
+             gen/poke_font_data.c gen/poke_sprites.c gen/poke_species.c
+
 BUILD = build
-TESTS = data_selfcheck test_calc test_battle test_ai test_sprites test_font
+TESTS = data_selfcheck test_calc test_battle test_ai test_sprites test_font \
+        test_render
 
 .PHONY: all test check-consistency bench types sprites sprites-preview \
-        font lvgl-font font-preview readme-images clean
+        font lvgl-font lvgl-font-to-c font-preview readme-images \
+        screen-preview render-compare clean
 
 all: $(BUILD)
 
@@ -71,6 +80,11 @@ FONT_DATA = gen/font_cn.c gen/poke_species.c gen/poke_moves.c gen/poke_types.c \
 
 $(BUILD)/test_font: test/test_font.c $(FONT_DATA) | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) -o $@ $< $(FONT_DATA)
+
+# 渲染层自检。断言分两类：可判定的（越界/返回值/查表边界）直接断言，
+# 「只能看图发现」的（配色/版式）用取点验证。
+$(BUILD)/test_render: test/test_render.c $(RENDER_SRC) | $(BUILD)
+	$(CC) $(CFLAGS) $(INC) -o $@ $< $(RENDER_SRC)
 
 $(BUILD)/bench_ai: test/bench_ai.c $(SRC_AI) | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) $(TESTFLAGS) -o $@ $< $(SRC_AI)
@@ -130,11 +144,37 @@ lvgl-font:
 	  --out gen/font_app_12.c --name font_app_12 --size 12
 	python tools/gen_lvgl_font.py --font $(FONT) --symbols HP --no-subset \
 	  --out gen/font_hp_10.c --name font_hp_10 --size 10
+	@$(MAKE) --no-print-directory lvgl-font-to-c
+
+# 把 lv_font_conv 的输出转成项目自有格式（gen/poke_font_data.c）。
+# src/ 不能依赖 lvgl.h，必须走这一步；理由见 src/poke_font.h 的注释。
+lvgl-font-to-c:
+	python tools/lvgl_font_to_c.py --out gen/poke_font_data.c \
+	  gen/font_app_16.c gen/font_app_12.c gen/font_hp_10.c
 
 # 重出 README 配图。图里的精灵图与文字都从固件数据解出，所以数据一改
 # 就要重跑，不要手画。生成后顺带做一次字库覆盖校验。
 readme-images:
 	python tools/make_readme_images.py
+
+# 把固件渲染层画的战斗界面导成图片。
+# 渲染的 bug 不崩溃、不报错，只是画出来不对 —— 只能看图发现。
+$(BUILD)/dump_screen: test/dump_screen.c $(RENDER_SRC) | $(BUILD)
+	$(CC) $(CFLAGS) $(INC) -o $@ $< $(RENDER_SRC)
+
+screen-preview: $(BUILD)/dump_screen
+	@mkdir -p data/screen_preview
+	$(BUILD)/dump_screen
+	python tools/ppm2png.py data/screen_preview/battle.ppm \
+	  data/screen_preview/battle.png --scale 3
+
+# 比对「固件渲染层」与「PC 预览」画的同一屏。
+# 两边是独立实现，允许 RGB565 量化与边缘 1px 的差异；
+# 差异 >32 的像素低于 2% 算通过（阈值与理由见 tools/compare_screen.py）。
+render-compare: screen-preview readme-images
+	python tools/compare_screen.py --c data/screen_preview/battle.ppm \
+	  --py docs/img/hero.png --scale 3 \
+	  --heatmap data/screen_preview/diff.png
 
 # SPRITES_SRC 在命令行给，例如：
 #   make sprites SPRITES_SRC=/d/Download/Chromedownload/sprites/sprites/pokemon/versions

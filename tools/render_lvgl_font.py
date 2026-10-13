@@ -312,15 +312,29 @@ class LVGLFont:
             return None
         return self.glyphs[gi]
 
-    def advance(self, ch):
-        """字符前进宽度（像素）。adv_w 在文件里是像素的 16 倍。"""
+    def adv16(self, ch):
+        """
+        字符前进宽度，单位 1/16 像素（沿用 LVGL 的原始单位）。
+        缺字返回 0 —— **不占宽度也不绘制**，与固件侧
+        src/poke_font.c 的 font_text_width 一致。
+        """
         g = self.glyph(ch)
-        if g is None:
-            return 16
-        return max(1, round(g.get("adv_w", 16) / 16))
+        return g.get("adv_w", 0) if g else 0
+
+    def advance(self, ch):
+        """单个字符的前进宽度（像素），已取整。"""
+        return (self.adv16(ch) + 8) >> 4
 
     def measure(self, text):
-        return sum(self.advance(c) for c in text)
+        """
+        整行宽度。累加 1/16 单位后**一次**取整。
+
+        逐字取整会让长文本越走越窄（每字最多差半像素），实测一行 12 个
+        汉字能偏 1px。更要紧的是：固件侧 src/poke_font.c::font_text_width
+        就是这么算的，两边不一致的话右对齐的文字会比固件里偏 1~2px，
+        图对比时看到一堆"文字差一格"的假阳性（踩过）。
+        """
+        return (sum(self.adv16(c) for c in text) + 8) >> 4
 
     def sample(self, g, x, y):
         """读第 (x,y) 个像素的亮度 0..1。位图是连续位打包，行间不补齐。"""
@@ -358,13 +372,13 @@ class LVGLFont:
         # 基线在行框内的位置；ofs_y 是字形底边相对基线的偏移
         baseline = y + ((self.line_height - self.base_line)
                         if self.line_height else 16)
-        cx = x
+        pen = x << 4          # 1/16 像素单位累加，末了一次取整
         for ch in text:
             g = self.glyph(ch)
             if g is not None:
                 bw, bh = g["box_w"], g["box_h"]
                 if bw and bh:
-                    ox = cx + g.get("ofs_x", 0)
+                    ox = (pen >> 4) + g.get("ofs_x", 0)
                     oy = baseline - g.get("ofs_y", 0) - bh
                     for gy in range(bh):
                         for gx in range(bw):
@@ -380,8 +394,8 @@ class LVGLFont:
                                 int(gg + (fg[1] - gg) * a),
                                 int(bb + (fg[2] - bb) * a),
                             )
-            cx += self.advance(ch)
-        return cx
+            pen += self.adv16(ch)
+        return (pen + 8) >> 4
 
 
 def main():

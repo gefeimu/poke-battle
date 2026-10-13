@@ -461,14 +461,16 @@ def make_hero(f_ui, f_lvgl, f_hp, sprites, names, scale):
         mx = 12 + col * 112
         my = 225 + row * 28
         sel = (i == 0)
+        # bbox 用 +W-1 / +H-1（PIL 的 bbox 含端点）。原来写 mx+106 会得到
+        # 107 宽，比固件侧 r_round_rect(mx, my, 106, 24) 多 1px。
         if sel:
-            d.rounded_rectangle([mx, my, mx + 106, my + 24], radius=3,
+            d.rounded_rectangle([mx, my, mx + 106 - 1, my + 24 - 1], radius=3,
                                 fill=SEL_FILL, outline=SEL_EDGE, width=2)
             d.polygon([(mx + 5, my + 8), (mx + 5, my + 16), (mx + 11, my + 12)],
                       fill=SEL_TEXT)
             ink = SEL_TEXT
         else:
-            d.rounded_rectangle([mx, my, mx + 106, my + 24], radius=3,
+            d.rounded_rectangle([mx, my, mx + 106 - 1, my + 24 - 1], radius=3,
                                 outline=DLG_EDGE_HI, width=1)
             ink = DLG_TEXT
         f_lvgl.draw(img, mx + 14, my + 2, nm, ink)

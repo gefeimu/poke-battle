@@ -19,6 +19,7 @@ data/sprites_4bpp/
 # 预览图（make sprites-preview / make font-preview / make readme-images 的输出）
 data/sprites_preview/
 data/font_preview/
+data/screen_preview/
 
 # ---- Python ----
 __pycache__/
