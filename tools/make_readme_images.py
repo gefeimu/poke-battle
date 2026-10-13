@@ -33,35 +33,60 @@ sys.path.insert(0, str(ROOT / "tools"))
 from render_lvgl_font import LVGLFont  # noqa: E402
 
 # ---------------------------------------------------------------- 调色
+#
+# 下面这组颜色不是随手挑的，是从 FoloToy 该项目对应的三代原版
+# （火红/叶绿）的反编译仓里取出的真实调色板：
+#
+#   graphics/battle_interface/healthbox.pal   血条框
+#   graphics/battle_interface/healthbar.pal   HP 条
+#   graphics/battle_interface/textbox1.pal    对话框
+#
+# 顺带拿到了血条框的真实尺寸（OAM 定义 = 64x64 两个精灵拼合）：
+#   对手框 128x32，我方框 128x64（多一条 EXP 条）
 
-SKY_TOP = (74, 154, 224)
-SKY_BOT = (176, 220, 250)
-GROUND = (98, 172, 92)
-PLATFORM = (168, 220, 148)
+# 血条框
+HB_FILL = (255, 255, 222)     # healthbox.pal[2] 米白填充
+HB_EDGE = (65, 65, 65)        # healthbox.pal[1] 边框
+HB_INNER = (222, 213, 180)    # healthbox.pal[3] 内斜角
+HB_TEXT = (32, 57, 0)         # healthbox.pal[7] 框内文字（深绿）
+HB_SHADOW = (82, 106, 98)     # healthbox.pal[6] 右下投影（墨绿）
+HB_EXP = (65, 205, 255)       # healthbox.pal[11] EXP 条（青）
 
-HPBOX_BG = (248, 248, 240)
-HPBOX_EDGE = (40, 44, 52)
-TEXT_DARK = (44, 44, 52)
-TEXT_WARN = (192, 84, 44)
+# HP 条（双色立体：上行高光 + 下行基色）
+BAR_TRACK = (57, 57, 57)
+BAR_TRACK_HI = (131, 131, 139)
+BAR_GREEN = (115, 255, 172), (90, 213, 131)
+BAR_YELLOW = (255, 230, 57), (205, 172, 8)
+BAR_RED = (255, 90, 57), (172, 65, 74)
 
-BAR_TRACK = (96, 96, 104)
-BAR_GREEN = (104, 200, 96)
-BAR_YELLOW = (240, 200, 72)
-BAR_RED = (232, 88, 72)
+# 对话框（白底 + 蓝框）
+DLG_FILL = (255, 255, 255)
+DLG_EDGE = (65, 74, 123)
+DLG_EDGE_HI = (106, 139, 189)
+DLG_TEXT = (41, 49, 49)
+DLG_GOLD = (156, 123, 24)
 
-PANEL_BG = (30, 34, 44)
-PANEL_EDGE = (78, 86, 102)
-TEXT_LIGHT = (234, 238, 246)
-MOVE_BOX = (44, 50, 64)
-MOVE_SEL = (62, 72, 96)
-CURSOR = (255, 214, 92)
+# 选中项高亮
+SEL_FILL = (255, 230, 57)
+SEL_EDGE = (205, 172, 8)
+SEL_TEXT = (41, 49, 49)
 
+# 场景
+SKY_TOP = (108, 176, 232)
+SKY_BOT = (196, 226, 248)
+GROUND = (152, 200, 112)
+GROUND_DARK = (120, 176, 88)
+PLATFORM = (184, 220, 148)
+PLATFORM_DARK = (144, 192, 108)
+
+# 页面底（README 配图的画布，不属于游戏本体）
 PAGE_BG = (18, 20, 26)
 PAGE_TITLE = (140, 212, 255)
 PAGE_SUB = (128, 140, 158)
 LABEL = (206, 212, 224)
 
 SCREEN_W, SCREEN_H = 240, 320
+BATTLE_H = 160                      # 上半屏 = 原版 GBA 战斗画面高度
 
 
 # ---------------------------------------------------------------- 1bpp 字库
@@ -191,23 +216,82 @@ def sprite_table(text):
 
 # ---------------------------------------------------------------- 绘制小工具
 
-def rect(d, box, fill=None, edge=None, width=1):
-    d.rectangle(box, fill=fill, outline=edge, width=width)
-
-
-def bar(d, x, y, w, h, ratio, color):
-    d.rectangle([x, y, x + w - 1, y + h - 1], fill=BAR_TRACK)
-    fill_w = max(0, min(w - 2, int((w - 2) * ratio)))
-    if fill_w > 0:
-        d.rectangle([x + 1, y + 1, x + 1 + fill_w - 1, y + h - 2], fill=color)
-
-
 def hp_color(ratio):
+    """FRLG 的 HP 条分三档变色，返回 (高光色, 基色)。"""
     if ratio > 0.5:
         return BAR_GREEN
     if ratio > 0.2:
         return BAR_YELLOW
     return BAR_RED
+
+
+def hp_bar(d, x, y, w, h, ratio):
+    """
+    画 FRLG 风格的 HP 条。
+
+    原版是**双色立体**：上行高光、下行基色，外面套一圈深色槽。
+    直接用单色矩形会显得很平，和原版差得远。
+    """
+    d.rectangle([x, y, x + w - 1, y + h - 1], fill=BAR_TRACK)
+    inner_w = w - 2
+    fill_w = max(0, min(inner_w, int(round(inner_w * ratio))))
+    if fill_w <= 0:
+        return
+    hi, lo = hp_color(ratio)
+    top = h // 2 - 1 if h >= 4 else 1
+    d.rectangle([x + 1, y + 1, x + fill_w, y + 1 + top - 1], fill=hi)
+    d.rectangle([x + 1, y + 1 + top, x + fill_w, y + h - 2], fill=lo)
+
+
+def frlg_frame(d, x, y, w, h, radius=5):
+    """FRLG 血条框的外框：右下角墨绿投影 + 深灰描边 + 米白填充。"""
+    d.rounded_rectangle([x + 3, y + 3, x + w - 1 + 3, y + h - 1 + 3],
+                        radius=radius, fill=HB_SHADOW)
+    d.rounded_rectangle([x, y, x + w - 1, y + h - 1],
+                        radius=radius, fill=HB_FILL, outline=HB_EDGE, width=2)
+
+
+def healthbox(font, img, d, x, y, w, h, name, lv, ratio,
+              hp_text=None, exp=None):
+    """
+    一个完整的血条框。
+
+    对手框 128x32：名字 + Lv + HP 条（原版对手框不显示数字）
+    我方框 128x64：多「HP」标签、一行 HP 数字和一条 EXP 条
+
+    原版我方框的第 2 行是「HP」+ 条，第 3 行数字右对齐，第 4 行 EXP 条。
+    """
+    frlg_frame(d, x, y, w, h)
+    font.draw(img, x + 8, y + 2, name, HB_TEXT)        # 名字
+    lv_x = x + w - 8 - font.measure(lv)
+    font.draw(img, lv_x, y + 2, lv, HB_TEXT)           # 等级右对齐
+
+    if hp_text:
+        # 我方框：左边标「HP」，条相应缩短，数字右对齐到框内右侧
+        font.draw(img, x + 8, y + 20, "HP", HB_TEXT)
+        bar_x = x + 30
+        bar_w = w - 30 - 8
+    else:
+        bar_x = x + 8
+        bar_w = w - 16
+    hp_bar(d, bar_x, y + 22, bar_w, 8, ratio)
+
+    if hp_text:
+        font.draw(img, x + w - 8 - font.measure(hp_text), y + 30,
+                  hp_text, HB_TEXT)
+    if exp is not None:
+        d.rectangle([x + 8, y + 55, x + w - 9, y + 58], fill=BAR_TRACK)
+        ew = int((w - 18) * exp)
+        if ew > 0:
+            d.rectangle([x + 9, y + 56, x + 8 + ew, y + 57], fill=HB_EXP)
+
+
+def dialog(d, x, y, w, h, radius=6):
+    """FRLG 对话框：白底 + 深蓝外框 + 浅蓝内框。"""
+    d.rounded_rectangle([x, y, x + w - 1, y + h - 1],
+                        radius=radius, fill=DLG_FILL, outline=DLG_EDGE, width=3)
+    d.rounded_rectangle([x + 3, y + 3, x + w - 4, y + h - 4],
+                        radius=radius - 2, outline=DLG_EDGE_HI, width=1)
 
 
 def check_charset(font, strings, label):
@@ -237,86 +321,103 @@ def check_charset(font, strings, label):
 # ---------------------------------------------------------------- 三个图
 
 def make_hero(f_lvgl, sprites, names, scale):
-    """240x320 战斗界面布局示意。"""
-    img = Image.new("RGB", (SCREEN_W, SCREEN_H), GROUND)
+    """
+    240x320 战斗界面，**按三代（火红/叶绿）原版版式重画**。
+
+    版式依据（都从 pret/pokefirered 反编译仓取得，不是凭印象）：
+
+    | 项 | 值 | 出处 |
+    |---|---|---|
+    | 对手血条框 | 128x32，左上角贴边 (0,0) | OAM `SPRITE_SHAPE(64x64)` x2 精灵拼合 |
+    | 我方血条框 | 128x64，右下角贴边 (112,88) | 同上，多一行 HP 数字 + EXP 条 |
+    | 网格 | 左上 / 右下**对角**摆放 | 原版就是对角，两框各占半屏宽 |
+    | 框体配色 | 米白填充 + 深灰描边 + 右下墨绿投影 | `healthbox.pal` |
+    | HP 条 | 双色立体（上行高光、下行基色）+ 深色槽 | `healthbar.pal` |
+    | 对话框 | 白底 + 深蓝外框 + 浅蓝内框 | `textbox1.pal` |
+
+    屏幕是 240x320，正好是 GBA 240x160 的两倍，所以：
+      上半屏 y=0..159  = 原版战斗画面（含两个血条框）
+      下半屏 y=160..319 = 对话框（日志）+ 招式菜单 + 状态行
+
+    原版把对话框压在画面底部的 48px 里，所以血条框和对话框是挤在一起的；
+    我们高一倍，正好可以把对话框整块放到下半屏，两框都完整可见。
+    """
+    img = Image.new("RGB", (SCREEN_W, SCREEN_H), GROUND_DARK)
     d = ImageDraw.Draw(img)
 
-    GROUND_Y = 96
+    HORIZON = 84
 
-    # 天空渐变
-    for y in range(GROUND_Y):
-        t = y / max(1, GROUND_Y - 1)
+    # ---- 天空 + 地面（铺满整屏，对话框浮在上面）----
+    # 原版的画面只有 240x160，我们的屏高一倍，所以场景直接铺满整屏，
+    # 对话框叠在下半屏。比「下半屏另起一块纯色面板」更接近原版观感。
+    for y in range(HORIZON):
+        t = y / max(1, HORIZON - 1)
         d.line([(0, y), (SCREEN_W, y)],
                fill=tuple(int(a + (b - a) * t)
                           for a, b in zip(SKY_TOP, SKY_BOT)))
-    # 地面
-    d.rectangle([0, GROUND_Y, SCREEN_W, SCREEN_H], fill=GROUND)
+    for y in range(HORIZON, SCREEN_H):
+        t = (y - HORIZON) / max(1, SCREEN_H - HORIZON - 1)
+        d.line([(0, y), (SCREEN_W, y)],
+               fill=tuple(int(a + (b - a) * t)
+                          for a, b in zip(GROUND, GROUND_DARK)))
 
-    # 立绘平台（画在立绘与面板之前，会被它们盖住下缘）
-    d.ellipse([146, 74, 226, 98], fill=PLATFORM)
-    d.ellipse([4, 148, 100, 172], fill=PLATFORM)
+    # ---- 立绘平台（画在立绘与血条框之前，下缘会被盖住）----
+    d.ellipse([136, 74, 220, 98], fill=PLATFORM_DARK)
+    d.ellipse([138, 72, 218, 94], fill=PLATFORM)
+    d.ellipse([2, 122, 90, 148], fill=PLATFORM_DARK)
+    d.ellipse([4, 120, 88, 144], fill=PLATFORM)
 
-    # 对手立绘（右上）。底边落在 y=82，**必须高于我方 HP 框的顶边 y=88**，
-    # 否则会被 HP 框盖住下半身（第一版就是这个问题）。
+    # ---- 立绘 ----
+    # 对手：右上。底边 y=86 必须**高于我方血条框顶边 y=88**，
+    # 否则下半身会被血条框盖住（第一版踩过）。
     foe = sprites[("metagross", "front")]
-    img.paste(foe, (150, 18), foe)
-    # 我方立绘（左下）
+    img.paste(foe, (146, 22), foe)
+    # 我方：中左
     me = sprites[("charizard", "front")]
-    img.paste(me, (14, 96), me)
+    img.paste(me, (10, 70), me)
 
-    # ---- 对手 HP 框（左上）----
-    d.rounded_rectangle([6, 8, 118, 46], radius=4,
-                        fill=HPBOX_BG, outline=HPBOX_EDGE, width=2)
-    f_lvgl.draw(img, 14, 13, names["metagross"], TEXT_DARK)
-    lv = "Lv50"
-    lv_w = f_lvgl.measure(lv)
-    f_lvgl.draw(img, 108 - lv_w, 13, lv, TEXT_DARK)
-    bar(d, 12, 35, 100, 7, 0.72, hp_color(0.72))
+    # ---- 两个血条框：对角贴边，尺寸照原版 ----
+    # 对手：左上，128x32
+    healthbox(f_lvgl, img, d, 0, 0, 128, 32,
+              names["metagross"], "Lv50", 0.72)
+    # 我方：右下，128x64（多 HP 数字与 EXP 条）
+    healthbox(f_lvgl, img, d, 112, 88, 128, 64,
+              names["charizard"], "Lv50", 0.44,
+              hp_text="68/153", exp=0.35)
 
-    # ---- 我方 HP 框（右下）----
-    d.rounded_rectangle([118, 88, 234, 142], radius=4,
-                        fill=HPBOX_BG, outline=HPBOX_EDGE, width=2)
-    f_lvgl.draw(img, 126, 93, names["charizard"], TEXT_DARK)
-    lv_w = f_lvgl.measure(lv)
-    f_lvgl.draw(img, 226 - lv_w, 93, lv, TEXT_DARK)
-    bar(d, 124, 115, 102, 7, 0.44, hp_color(0.44))
-    f_lvgl.draw(img, 124, 124, "HP 68/153", TEXT_DARK)
+    # ---- 下半屏：对话框 + 招式菜单 + 状态行 ----
+    # 日志框
+    dialog(d, 4, 164, 232, 52)
+    f_lvgl.draw(img, 14, 168, "喷火龙 使用了 喷射火焰！", DLG_TEXT)
+    f_lvgl.draw(img, 14, 189, "会心一击！造成了 187 点伤害", DLG_TEXT)
 
-    # ---- 下方菜单面板 ----
-    d.rectangle([0, 164, SCREEN_W, SCREEN_H], fill=PANEL_BG)
-    d.line([(0, 164), (SCREEN_W, 164)], fill=PANEL_EDGE)
-
-    # 战斗日志两行。**用 src/poke_battle.c 里的原文**，不要自己编词：
-    # 字库的字符是从真实文案收集的，编出来的词（如「效果绝佳」的「佳」）
-    # 不在字库里，会渲染成空白。校验见 check_charset()。
-    f_lvgl.draw(img, 10, 168, "喷火龙 使用了 喷射火焰！", TEXT_LIGHT)
-    f_lvgl.draw(img, 10, 189, "会心一击！造成了 187 点伤害", TEXT_LIGHT)
-    d.line([(0, 212), (SCREEN_W, 212)], fill=PANEL_EDGE)
-
-    # 招式菜单 2x2。左右两列各 114 宽：名字最长 4 个汉字（52px），
-    # PP 最长 "15/15"（40px），留出光标与间隙后正好不重叠。
-    moves = [("喷射火焰", "15/15"), ("龙爪", "15/15"),
-             ("翅膀攻击", "35/35"), ("剑舞", "20/20")]
+    # 招式菜单（2x2），用同一个对话框样式
+    dialog(d, 4, 220, 232, 64)
+    moves = [("喷射火焰", "15"), ("龙爪", "15"),
+             ("翅膀攻击", "35"), ("剑舞", "20")]
     for i, (nm, pp) in enumerate(moves):
         col, row = i % 2, i // 2
-        x = 4 + col * 118
-        y = 218 + row * 30
+        mx = 12 + col * 112
+        my = 225 + row * 28
         sel = (i == 0)
-        d.rounded_rectangle([x, y, x + 114, y + 26], radius=3,
-                            fill=MOVE_SEL if sel else MOVE_BOX,
-                            outline=CURSOR if sel else PANEL_EDGE)
-        ink = CURSOR if sel else TEXT_LIGHT
         if sel:
-            d.polygon([(x + 4, y + 9), (x + 4, y + 17), (x + 10, y + 13)],
-                      fill=CURSOR)
-        f_lvgl.draw(img, x + 13, y + 3, nm, ink)
-        pp_w = f_lvgl.measure(pp)
-        f_lvgl.draw(img, x + 110 - pp_w, y + 3, pp,
-                    CURSOR if sel else PAGE_SUB)
+            d.rounded_rectangle([mx, my, mx + 106, my + 24], radius=3,
+                                fill=SEL_FILL, outline=SEL_EDGE, width=2)
+            d.polygon([(mx + 5, my + 8), (mx + 5, my + 16), (mx + 11, my + 12)],
+                      fill=SEL_TEXT)
+            ink = SEL_TEXT
+        else:
+            d.rounded_rectangle([mx, my, mx + 106, my + 24], radius=3,
+                                outline=DLG_EDGE_HI, width=1)
+            ink = DLG_TEXT
+        f_lvgl.draw(img, mx + 14, my + 2, nm, ink)
+        pp_x = mx + 102 - f_lvgl.measure(pp)
+        f_lvgl.draw(img, pp_x, my + 2, pp, DLG_GOLD if sel else DLG_TEXT)
 
-    # 底部提示条（用词取自 tools/gen_font.py 的 UI_STRINGS）
-    d.line([(0, 278), (SCREEN_W, 278)], fill=PANEL_EDGE)
-    f_lvgl.draw(img, 10, 282, "选择招式   换人   逃跑   返回", LABEL)
+    # 状态行（原版把这条压在对话框里，我们单独给它一个框）
+    dialog(d, 4, 288, 232, 28, radius=5)
+    f_lvgl.draw(img, 14, 292, "PP 15/15", DLG_GOLD)
+    f_lvgl.draw(img, 100, 292, "选择招式   换人   逃跑", DLG_TEXT)
 
     return img.resize((SCREEN_W * scale, SCREEN_H * scale), Image.NEAREST)
 
