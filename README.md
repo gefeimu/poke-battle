@@ -1,8 +1,40 @@
-# poke-battle — 宝可梦对战引擎（第六代规则 + 三代图鉴）
+# poke-battle
 
-在 **FoloToy AI Passport**（ESP32-C3 可穿戴开发设备，240×320 彩色屏，三实体键）上实现完整的三代（红宝石）宝可梦对战。
+**在 FoloToy AI Passport 上跑的宝可梦对战引擎。** 第六代能力值与伤害公式 + 三代图鉴
+（386 只 + 41 个 Mega 形态），纯 C11，**无动态内存、无 I/O**，因此能在 PC 上把一整局
+6v6 跑完并断言每一步的结果。
 
-自用学习项目。宝可梦相关设计版权归任天堂 / Creatures / GAME FREAK 所有。
+<p align="center">
+  <img src="docs/img/hero.png" width="330" alt="战斗界面布局示意">
+</p>
+
+<p align="center"><sub>
+界面布局示意（240×320 原生分辨率 ×3）。<b>渲染层还没写，这不是真机截屏</b>——
+图里的精灵图与文字都是把固件数据解出来摆到规划位置上生成的，见
+<code>tools/make_readme_images.py</code>。
+</sub></p>
+
+| | |
+|---|---|
+| 目标平台 | FoloToy AI Passport：ESP32-C3，8 MB Flash，**无 PSRAM**，240×320 屏，3 个实体键 |
+| Flash 占用 | ~1.03 MB / 8 MB（13%），其中精灵图 867 KB |
+| 数据规模 | 386 种族 + 41 Mega / 354 招式 / 251 特性 / 383 道具 / 25 性格 |
+| 测试 | **324 项断言全过，零编译警告**（`make test`，约 30 秒） |
+| AI 强度 | 200 局 6v6 对随机手 **70%**，同批种子随机基线 52% |
+| 进度 | 数据层 + 规则层 + AI 完成；**UI / 渲染层未开始** |
+
+```bash
+git clone https://github.com/gefeimu/poke-battle.git && cd poke-battle
+make test            # 编译并跑全部测试
+make bench           # AI 决策耗时剖析
+make sprites-preview # 把固件里的精灵图导成 PNG 看画质
+```
+
+克隆下来即可构建：`gen/` 里的生成产物已入库（源数据 14 MB 见
+[数据来源与重建方法](docs/data-sources.md)）。
+
+> 自用学习项目。宝可梦相关设计版权归任天堂 / Creatures / GAME FREAK 所有。
+> 第三方数据与字体的出处、许可见[第三方资源与许可](#第三方资源与许可)。
 
 ---
 
@@ -60,6 +92,91 @@ Pokémon Showdown 的 `sim/bots/` 已从 master 移除，只剩 `RandomPlayerAI`
 
 ---
 
+## 界面设计（待实现）
+
+<p align="center">
+  <img src="docs/img/hero.png" width="280" alt="战斗界面布局">
+</p>
+
+| 区域 | y | 内容 |
+|---|---|---|
+| 战斗场景 | 0–164 | 双方立绘 + 两个 HP 框（对手左上、我方右下，与 GBA 一致） |
+| 战斗日志 | 164–212 | 2 行。**`battle_step()` 一次会写入多条**，需按 OK 逐条翻页 |
+| 招式菜单 | 212–278 | 2×2，招式名 + PP |
+| 状态提示 | 278–320 | 键位提示 / 选中招式的附加信息 |
+
+### 要写的模块
+
+| 文件 | 职责 | 关键点 |
+|---|---|---|
+| `src/poke_ui.c/.h` | 界面状态机 | 4 组界面的切换、光标移动、把按键翻译成引擎动作 |
+| `src/poke_input.c/.h` | 三键驱动 | 自己做去抖与短按/长按判定（官方 BSP 只给 ADC 读数） |
+| `src/poke_save.c/.h` | 队伍配置持久化 | NVS；24 KB 分区约可存 100 支队 |
+| `main/app_main.c` | ESP-IDF 入口 | 屏幕/按键初始化、lifecycle 任务 |
+| `test/test_ui.c` | 状态机单测 | 喂按键序列 → 断言状态迁移与 `b->my_action` 取值 |
+| `test/dump_screen.c` | 帧缓冲导出 PGM | **不上硬件就能验证布局** |
+
+**绘制原语不用自己写**——官方 BSP 已提供显示与按键，绘制交给 LVGL。
+这条是查过官方仓之后才确认的：最初的设计里我把「屏幕驱动 + 绘制原语 +
+中文字体」都算成了要自己实现的工作量，实际只需要写界面逻辑。
+
+### 4 组界面
+
+| 界面 | 内容 |
+|---|---|
+| **队伍配置** | 386 只列表（可滚动/检索）+ 逐只编辑性格(25)/努力值(6×0-255)/个体值/道具(383)/4 个招式(354)，每个都是可滚动选择器；再加难度选择。**工作量最大的一块** |
+| **战斗主界面** | 立绘走 `sprite_get(pid, SPR_FRONT)`；名字/等级/HP 从 `battle_active_c(b, side)` 读 `cur_hp`/`hp_max`；招式菜单用 `mv_get(id)->name_cn` + `m->pp[i]` |
+| **战斗中弹层** | 换人 / 背包 / Mega 确认 / 逃跑。Mega 走 `battle_mega()`，**不消耗回合，必须在出招前调用** |
+| **日志与结算** | 日志逐条播放；胜负画面读 `b->result` |
+
+### 4 个必须处理的引擎接口约束
+
+| 约束 | 处理方式 |
+|---|---|
+| `battle_step()` 返回 0/1/2/3 | 1 = 我方需换人，2 = 对方，3 = 双方。**返回值非 0 时必须先进强制换人界面**，不能直接进下一回合 |
+| 出招与换人互斥 | 出招填 `b->my_action`（0..3）；换人填 `my_action = 0xFF` + `my_switch`。**换人消耗回合，双方都不出招** |
+| 日志有开关 | 跑 AI 自对弈时可 `battle_log_enable(false)` 省掉 `vsnprintf` 开销；正式对局要开着 |
+| 随机源统一 | 不能自己调 `rand()`，引擎的随机全部走 `battle_rng()`（这样单测才能固定种子重放） |
+
+### 硬件侧三条事实（来自官方仓，我最初全估错了）
+
+| 项 | 实际 | 我最初的估计 |
+|---|---|---|
+| 显示缓冲 | LVGL **部分刷新**，一个 `240×20` RGB565 ≈ **9.6 KB** | 以为要 150 KB 全屏帧缓冲，还担心放不下双缓冲 |
+| 长按阈值 | **500 ms**（短按 180 ms） | 以为 800 ms |
+| 按键接线 | 三键**共用 GPIO0**，靠电阻分压区分：上 0 mV / 下 300 mV / 确定 595 mV / 松开 3300 mV | 以为是三个独立 IO |
+
+按键还有个具体的坑：**ADC 读失败必须当「未按下」，不能当 0 mV**，否则一次读错
+就会被判成「上键被按住」。另外**不能用内部上拉**（45 kΩ 会把三档全挤进 0~154 mV）。
+官方 BSP 里长按阈值特意从组件默认的 1500 ms 下调到 500 ms，理由是「在这台三键小设备上
+明显偏迟钝」。
+
+### 队伍配置可以挪到配套小程序
+
+「队伍配置」是设备端最大的一块（386 项列表 + 7 个选择器）。替代方案是做成微信小程序、
+用 BLE 把队伍推给设备，设备端只留「选第几队 → 对战 → 结算」。
+
+配置数据量很小，传输毫无压力：
+
+| 字段 | 字节 |
+|---|---|
+| 种族 id 2 + 等级 1 + 性格 1 + 特性 1 + 道具 2 | 7 |
+| 4 个招式槽 4×2 | 8 |
+| 努力值 6 + 个体值 6 | 12 |
+| **单只合计** | **27** |
+
+一队 6 只 = 162 字节，加头部（版本/序号/CRC16）约 **170 字节**。
+
+唯一要留心的约束是 **BLE 默认 MTU 23 字节，扣掉 ATT 头只剩 20 字节有效载荷**；
+`wx.setBLEMTU` 只在 Android 5.1+ 生效、**iOS 不支持**（调了不报错但不生效），
+所以必须按 20 字节分包：170 字节 = 9 包，每包带序号 + 总包数 + 数据。
+BLE 会丢包，收齐后要用头部 CRC 校验，失败要求重传。
+
+**状态：仅讨论，未实现。** 无论是否做小程序，固件都应内置 1~2 支**只读预设队伍**——
+否则「刚焊好的板子」和「手机不在身边」两种情况下设备完全没法玩。
+
+---
+
 ## 当前进度
 
 | 模块 | 状态 | 说明 |
@@ -73,7 +190,7 @@ Pokémon Showdown 的 `sim/bots/` 已从 master 移除，只剩 `RandomPlayerAI`
 | 道具系统 | ✅ 完成 | 16 属性增强/吃剩的/焦点镜片/贝壳之铃等，21 项单测 |
 | 对战 AI | ✅ 完成 | L1 启发式 + 2-ply + 蒙特卡洛，19 项单测 |
 | 中文字库 | ✅ 完成 | 1274 字，两套方案（1bpp 35 KB / LVGL 4bpp 119 KB），25 项自检 |
-| UI / 渲染 | ⏳ 未开始 | 三键状态机 + 精灵图绘制 |
+| UI / 渲染 | ⏳ 未开始 | 三键状态机 + 精灵图绘制，见[界面设计](#界面设计待实现) |
 
 测试合计 **324 项断言全部通过，零编译警告**。用 `make test` 一键运行。
 另有跨文件一致性检查（`make check-consistency`），当前 0 处不一致。
@@ -92,7 +209,7 @@ Pokémon Showdown 的 `sim/bots/` 已从 master 移除，只剩 `RandomPlayerAI`
 
 - **L1 启发式**：对每个候选（4 个招式槽 + 最多 5 次换人 + Mega 变体）打分。
   计入期望伤害、克制倍率、STAB、能力等级、命中率、先制、异常/回复/吸取、
-  PP 消耗、对手本回合最大威胁、免��、尚未实现的招式直接重罚。
+  PP 消耗、对手本回合最大威胁、免疫、尚未实现的招式直接重罚。
 - **L2 2-ply**：对 L1 前 N 个自身候选，枚举对手前 K 种应手，在克隆状态上
   真跑 `battle_step`，按「对手威胁权重」加权平均。同时出手、换人时机、
   先制抢血都在这一层体现。**注意是加权期望而非 min**——min 是「防最坏
@@ -104,12 +221,15 @@ Pokémon Showdown 的 `sim/bots/` 已从 master 移除，只剩 `RandomPlayerAI`
   HP/种族值的 eval 主导决策**，实测 73% → 47%。所以搜索分先归一化到
   [-1,1] 再乘小权重加到 L1 上（`norm * 200`）。
 
-实测强度（`make test`，200 局 6v6，AI 控 side0，对手纯随机）：
+实测强度（`test/test_ai.c`，200 局 6v6，AI 控 side0，对手纯随机）：
 
-| | 胜率 |
-|---|---|
-| AI（冠军档） | **73%** |
-| 随机手基线（同批种子、双方都随机） | 54% |
+| | 胜场 | 胜率 |
+|---|---|---|
+| AI（冠军档，L1+L2+L3） | 139/200 | **70%** |
+| 随机手基线（同批种子，随机 vs 随机） | 103/200 | 52% |
+
+**必须带对照组**：6v6 队伍强度方差很大，只看绝对值会被误导。断言写成
+「AI 胜率 − 基线胜率 >= 10 个百分点」，默认样本量 200 局（约 16 秒）。
 
 单次决策耗时（PC，gcc -O2；ESP32-C3 约慢 20~40 倍）：
 
@@ -286,6 +406,14 @@ make font-preview
 
 ### 精灵图
 
+<p align="center">
+  <img src="docs/img/sprites.png" width="620" alt="精灵图总览">
+</p>
+
+<p align="center"><sub>上图全部由 <code>gen/poke_sprites.c</code> 里的 4bpp 索引色数据解出
+（<code>make sprites-preview</code>）。三代火红/叶绿立绘是原生 64×64，
+Mega 形态取自五代黑白版再缩到同样的 64×64。</sub></p>
+
 | 项 | 值 |
 |---|---|
 | 正面图源 | `generation-iii/firered-leafgreen`（原生即 64×64，**无需缩放**） |
@@ -367,18 +495,35 @@ python tools/build_sprites_c.py --src <路径> --gen3 black-white        # 427
 
 ### 中文字库
 
-| 项 | 值 |
-|---|---|
-| 字格 | 14×14（`FONT_CELL_W` / `FONT_CELL_H`） |
-| 位深 | 1bpp（黑白点阵，无抗锯齿） |
-| 每行字节 | `FONT_STRIDE` = ceil(14/8) = **2**（行尾 2 位补 0） |
-| 每字字节 | 14 × 2 = **28** |
-| 收录字数 | 1274（映射表），字形槽位 1280（按 8 对齐） |
-| 位图占用 | 1712 × 28 = 47,936 B（46.8 KB） |
-| 映射表 | 1274 × 4 = 5,096 B（5.0 KB） |
-| 合计 | **约 40,900 B（40 KB）** |
-| 字体 | 等线 Regular（`C:/Windows/Fonts/Deng.ttf`），字号 = 字格高度 |
-| 对照 | GB2312 全量 6763 字需 185 KB，子集化省 71% |
+**两套方案并存**，共用同一份字符清单 `gen/font_chars.txt`（1274 字）：
+
+<p align="center">
+  <img src="docs/img/font-compare.png" width="600" alt="两套字库对比">
+</p>
+
+<p align="center"><sub>同一段文本、同一放大倍数。<b>上为自制 1bpp 点阵，下为 LVGL 4bpp 抗锯齿。</b>
+注意 LVGL 版的 ASCII 是<b>比例宽度</b>（<code>Lv50</code> 只占约 4 个半角位），
+自制版每个 ASCII 都占满一个 14px 全角格。</sub></p>
+
+| | 自制 1bpp（`gen/font_cn.c`） | LVGL 4bpp（`gen/font_app_16.c`） |
+|---|---|---|
+| 字格 / 字号 | 14×14 | 16 px |
+| 位深 | 1bpp 黑白点阵 | 4bpp 抗锯齿 |
+| 每字字节 | 28（14 行 × 2 字节） | 平均约 95 |
+| 收录字数 | 1274（字形槽位 1280） | 1273（字形 1283） |
+| 占用 | 位图 35,840 B + 映射 5,096 B = **40,936 B（40 KB）** | 位图 **119.2 KB** |
+| 源字体 | 等线 Regular | 得意黑 Smiley Sans |
+| 生成 | `make font FONT=<字体>` | `make lvgl-font FONT=<字体>` |
+| 谁来画 | 自己解 1bpp，`font_draw_text()` 直写 RGB565 | 交给 LVGL |
+| ASCII | 等宽，每个占满全角格 | **比例宽度** |
+
+**实测结论：得意黑（Smiley Sans）在 16px 下偏细。** 它是倾斜的标题体、只有一个字重，
+16px 时笔画约 1px，4bpp 抗锯齿之后反而比 1bpp 点阵更虚（见上面对比图）。
+也就是说 LVGL 方案「机制上更省事」（不用自己写渲染、字号可缩放），但**字形质量
+目前不满意**，要等选定一个常规直立体（如 Noto Sans SC）再定。
+现在两套都留着，切换成本只是换一个 `.c` 文件。
+
+#### 自制 1bpp 的解码约定
 
 **解码公式**：像素 `i = y*FONT_CELL_W + x` 的位在
 `kFontBitmap[gi*FONT_CELL_H*FONT_STRIDE + y*FONT_STRIDE + x/8]`
@@ -389,6 +534,35 @@ python tools/build_sprites_c.py --src <路径> --gen3 black-white        # 427
 
 **渲染入口**：`font_draw_text(buf, w, h, x, y, color, utf8)` 直接写
 RGB565 缓冲区，自动跳过未收录字符（不换行，由调用方排布）。
+
+`FONT_CELL_W = 14` **不是 8 的倍数**，所以每行占 2 字节、行尾 2 位是填充。
+**一律用 `FONT_STRIDE = ceil(CELL_W / 8)`，不要写 `CELL_W / 8`** —— 整数除法得 1，
+会丢掉每行后 6 个像素，而读取端按 ceil 索引，两边错位后字形变成散点。
+
+#### LVGL 4bpp 的格式约定
+
+生成参数固定为：
+
+```bash
+lv_font_conv --font <字体> --size 16 --bpp 4 --format lvgl \
+  --no-compress --no-prefilter --force-fast-kern-format \
+  --range 0x20-0x7F --symbols "<gen/font_chars.txt 的内容>" -o gen/font_app_16.c
+```
+
+三个容易踩的点：
+
+- **`--no-prefilter` 不能漏**。LVGL 默认开启逐行预滤波，解码端要做逆运算；
+  我们的验证渲染器（以及未来的裸驱动）按原始 4bpp 解，漏掉它就是满屏噪声。
+  官方内置字体也带这个参数。
+- **字形位图是连续位打包**：一个 `box_w × box_h` 的 4bpp 字形占
+  `ceil(box_w * box_h * 4 / 8)` 字节，**行与行之间不补齐字节**。
+  按「每行对齐」解会全错（实测 40 个连续字形全部符合连续打包）。
+- **`SPARSE_*` 才是稀疏表**。cmap 类型后缀 `TINY` / `FULL` 只表示偏移表元素的宽度
+  （uint8 / uint16），**不代表稀不稀疏**。按 "TINY" 判连续会把稀疏表当连续，
+  算出的字形索引远超字形总数（实测 22800 > 1721）。
+
+`tools/render_lvgl_font.py` 能把该格式渲染成 PNG 肉眼验证，并带
+「位图总长 == 各字形尺寸之和」自检。
 
 #### 中文名从哪来
 
@@ -423,16 +597,18 @@ opencc / zhconv 之类的依赖：本项目要能在一台裸 Windows 上重建�
 | `poke_sprites` 像素 427×2048 | 874,496 | 854 |
 | `poke_sprites` 调色板 427×32 | 13,664 | 13 |
 | **精灵图小计** | **888,160** | **867** |
-| `font_cn` 位图 1712×28 | 47,936 | 46.8 |
+| `font_cn` 位图 1280×28 | 35,840 | 35.0 |
 | `font_cn` 码点映射 1274×4 | 5,096 | 5.0 |
-| **字库小计（1bpp 方案）** | **约 40,900** | **40** |
+| **字库小计（1bpp 方案）** | **40,936** | **40** |
 | `src/` 引擎代码（calc+battle+ability+item+ai） | 26,160 | 26 |
 | **当前合计** | **~1,083,400** | **~1,058（1.03 MB）** |
 
 约 **1.03 MB / 8 MB = 13%**。精灵图占 82%，是唯一值得压缩的对象
 （换 3bpp 或调色板复用可省 ~300 KB）。
 
-待补：UI / 渲染层。
+若改用 LVGL 4bpp 字库，字库小计从 40 KB 变成约 124 KB，合计约 1.17 MB（14.6%）。
+
+待补：UI / 渲染层（见[界面设计](#界面设计待实现)）。
 
 ### 关键数据约定
 
@@ -628,18 +804,72 @@ opencc / zhconv 之类的依赖：本项目要能在一台裸 Windows 上重建�
 
 28. **「AI 对随机手胜率 >= 75%」这种绝对阈值没有意义**。两队都是随机生成，
     队伍强度本身方差很大，16 局样本里 side0 随机胜率能在 43%~63% 之间浮动。
-    实测 16 局时 AI 只赢 11 局（69%）看起来很弱，但扩到 300 局后：
-    **AI 73% vs 随机基线 54%**，优势稳定。所以强度测试要：
+    实测 16 局时 AI 只赢 11 局（69%）看起来很弱，但扩到 200 局后：
+    **AI 70% vs 随机基线 52%**，优势稳定。所以强度测试要：
     - 跑同批种子的「随机 vs 随机」对照组；
     - 断言 **AI 胜率 − 基线胜率 >= 10 个百分点**，而非绝对值；
     - 默认样本量 200 局（约 16 秒，300 局实测 25.6 秒）。
 
 ---
 
+## 路线图
+
+### 已完成
+
+数据层（六张表 + 中文名）、规则层（能力值 / 伤害 / 6v6 回合流程 / 特性 / 道具 / Mega）、
+对战 AI（三层）、精灵图、两套中文字库。
+
+### 待做（按依赖排序）
+
+| # | 事项 | 说明 |
+|---|---|---|
+| 1 | **渲染层最小闭环** | `poke_render` + `dump_screen`：先做到「能把画面导成图看」。精灵图和字库的教训是渲染问题只能靠看图发现 |
+| 2 | **按键 + 最小状态机** | 用 `test_ui` 喂按键序列，不上硬件就能验证光标与状态迁移 |
+| 3 | **战斗界面** | 含日志逐条播放、强制换人分支、招式菜单 |
+| 4 | **队伍配置**（或挪到小程序） | 见[界面设计](#界面设计待实现)。先用手写死的队伍跑通全流程更划算 |
+| 5 | **NVS 存档 + 结算画面** | 烧录注意：从 `0x0` 烧合并 `full.bin` **会重置 NVS**，要保数据得用分段 `idf.py flash` |
+| 6 | **接入官方 BSP + LVGL** | 替换掉自制渲染方案，改用 `components/bsp` |
+
+### 已知待定
+
+- **AI 难度档位数量不一致**：需求写 5 档（简单 / 普通 / 困难 / 大师 / 大师+），
+  `src/poke_ai.h` 目前只有 3 档（`ROOKIE` / `SMART` / `EXPERT`）。
+  UI 的难度选择要么按 3 档做，要么先补齐另外 2 档。
+- **字体在 16px 下偏细**：得意黑是倾斜的**标题体**、只有一个字重，16px 下笔画约 1px，
+  4bpp 抗锯齿后字形发虚。同一批字渲染成 1bpp 点阵反而更清晰（见
+  [字体对比图](#中文字库)）。若最终走 LVGL 路线，建议再生成一份常规直立字体
+  （如 Noto Sans SC）对比。
+- **代码许可证未定**：尚未声明，需要时再补。
+
+---
+
+## 第三方资源与许可
+
+本项目**不包含**任何原版游戏素材，数据与字体均来自公开数据集。重建方法见
+[docs/data-sources.md](docs/data-sources.md)。
+
+| 资源 | 用途 | 许可 |
+|---|---|---|
+| [Veekun 数据集](https://github.com/veekun/pokedex) | 三代种族 / 招式 / 特性 / 道具 / 性格（`data/csv/`，不入库） | CC-BY-SA 3.0 |
+| [PokeAPI/sprites](https://github.com/PokeAPI/sprites) | 精灵图（`gen/poke_sprites.c` 的来源） | 游戏素材，版权归任天堂 / Creatures / GAME FREAK |
+| [得意黑 Smiley Sans](https://github.com/atelier-anchor/smiley-sans) | LVGL 4bpp 字库（`gen/font_app_16.c` 的来源） | SIL OFL 1.1，全文见 [docs/third-party/SmileySans-OFL.txt](docs/third-party/SmileySans-OFL.txt) |
+| 等线（Windows 系统字体） | 自制 1bpp 点阵字库（`gen/font_cn.c`） | 随 Windows 分发，**仅供本机自用**；要公开发布请换成 OFL 字体重新生成 |
+
+宝可梦（Pokémon）是任天堂 / Creatures / GAME FREAK 的注册商标，相关名称、形象与
+招式设计的权利归其各自所有者。本项目为自用学习项目，不作商业用途。
+
+---
+
 ## 相关链接
 
-- 设备官网 <https://ai-passport.folotoy.cn/>
-- 数据源 PokeAPI/sprites <https://github.com/PokeAPI/sprites>
-- 数据源 Veekun CSV <https://github.com/PokeAPI/pokeapi/tree/master/data/v2/csv>
-- 对战机制参考 pret/pokered <https://github.com/pret/pokered>
-- AI 算法参考 Technical Machine（评估函数权重表）
+- **设备与官方仓**
+  - AI Passport 官网 <https://ai-passport.folotoy.cn/>
+  - FoloToy/ai-passport —— BSP、LVGL 中文字体文档、BLE 伴侣小程序参考
+    <https://github.com/FoloToy/ai-passport>
+- **数据源**
+  - Veekun 数据集 <https://github.com/veekun/pokedex>
+  - PokeAPI/sprites <https://github.com/PokeAPI/sprites>
+- **机制与算法参考**
+  - 对战机制 pret/pokered <https://github.com/pret/pokered>
+  - AI 评估函数权重 Technical Machine —— 只借鉴算法不借鉴代码（它是 TypeScript，
+    且依赖 PS 引擎做前向模拟，无法移植到 8 MB Flash）
