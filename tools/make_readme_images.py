@@ -69,7 +69,8 @@ DLG_GOLD = (156, 123, 24)
 # HP 标签（嵌在条左端，原版就是这样）
 HP_LABEL = (255, 230, 0)      # healthbox.pal[9] 框内的黄
 HP_LABEL_EDGE = (0, 0, 0)     # 标签黑描边
-HP_ROW_H = 11                 # HP 行高度（标签嵌在条内，所以比纯条高）
+HP_ROW_H = 10                 # HP 行高度（标签嵌在条内，所以比纯条高）
+HP_INSET = 2                  # 状态框离屏幕边缘的缝隙
 
 # 选中项高亮
 SEL_FILL = (255, 230, 57)
@@ -237,7 +238,22 @@ def draw_outlined(font, img, x, y, text, fill, edge):
     font.draw(img, x, y, text, fill)
 
 
-def hp_row(font, img, d, x, y, w, h, ratio, label=True):
+def ink_top(font, ch):
+    """
+    字形墨迹的顶边相对 `draw(img, x, y, ...)` 那个 y 的偏移。
+
+    公式来自 LVGLFont.draw 的内部逻辑：墨迹顶边
+      = baseline - ofs_y - box_h
+      = (y + line_height - base_line) - ofs_y - box_h
+
+    用它算竖直居中，**不要写死偏移** —— 换字号之后偏移就变了
+    （实测 12px 是 +3、10px 是 +1），写死会让标签在胶囊里偏上或偏下。
+    """
+    g = font.glyph(ch)
+    return font.line_height - font.base_line - g["ofs_y"] - g["box_h"]
+
+
+def hp_row(font, img, d, x, y, w, h, ratio, label=True, label_font=None):
     """
     HP 条——**「HP」标签嵌在条的左端，整体是一个元素**（原版即如此）。
 
@@ -245,21 +261,24 @@ def hp_row(font, img, d, x, y, w, h, ratio, label=True):
          └ 左端：金色「HP」（黑描边）
          └ 其后：彩色填充，上下各内缩 2px
 
-    两个要点：
+    三个要点：
       1. **标签与条是一个整体**，不是「左边一个 HP 文字 + 右边一条独立的条」。
          分开画会显得散，且横向多占一个标签的宽度。
       2. **填充是双色立体**——原版不是单色矩形，而是上行高光、下行基色。
-         按单色画会明显「不像」。
+      3. **标签单独用更小的字号**（`label_font`，10px 那套），框内的名字与
+         数字仍用 12px。原版里 HP 两个字母确实比数字小一圈。
     """
     d.rounded_rectangle([x, y, x + w - 1, y + h - 1],
                         radius=max(1, h // 2), fill=BAR_TRACK)
 
     fx = x + 2
     if label:
-        # ASCII 字形的墨迹从 draw_y+3 起、高 9px；要让它竖直居中于胶囊内
-        draw_outlined(font, img, x + 4, y + (h - 9) // 2 - 3, "HP",
-                      HP_LABEL, HP_LABEL_EDGE)
-        fx = x + 4 + font.measure("HP") + 6
+        lf = label_font or font
+        box_h = lf.glyph("H")["box_h"]
+        draw_outlined(lf, img, x + 4,
+                      y + (h - box_h) // 2 - ink_top(lf, "H"),
+                      "HP", HP_LABEL, HP_LABEL_EDGE)
+        fx = x + 4 + lf.measure("HP") + 6
 
     inner_w = (x + w - 4) - fx
     if inner_w < 5:
@@ -272,8 +291,10 @@ def hp_row(font, img, d, x, y, w, h, ratio, label=True):
     x2 = fx + fill_w - 1
     d.rounded_rectangle([fx, y + 2, x2, y + h - 3],
                         radius=max(1, (h - 4) // 2), fill=lo)
+    # 高光占填充高度的上半（原版是上下各一半）
     if fill_w > 7:
-        d.rectangle([fx + 2, y + 2, x2 - 2, y + 3], fill=hi)
+        hi_h = max(1, (h - 4 + 1) // 2)
+        d.rectangle([fx + 2, y + 2, x2 - 2, y + 1 + hi_h], fill=hi)
 
 
 def frlg_frame(d, x, y, w, h, radius=5):
@@ -284,27 +305,35 @@ def frlg_frame(d, x, y, w, h, radius=5):
                         radius=radius, fill=HB_FILL, outline=HB_EDGE, width=2)
 
 
-def healthbox(font, img, d, x, y, w, h, name, lv, ratio, hp_text=None):
+NAME_ROW_DY = 1      # 名字行的 draw_y 偏移
+HP_ROW_DY = 16       # HP 条的顶边偏移
+NUM_ROW_DY = 28      # HP 数字行的 draw_y 偏移（仅我方框）
+
+
+def healthbox(font, img, d, x, y, w, h, name, lv, ratio,
+              hp_text=None, label_font=None):
     """
-    一个完整的血条框。`font` 传 12px 那套（16px 在小框里明显偏大）。
+    一个完整的血条框。`font` 传 12px 那套（16px 在小框里明显偏大），
+    `label_font` 传 10px 那套（HP 标签比框内文字再小一号）。
 
-    对手框 128x32：名字 + Lv + HP 条（原版对手框不显示数字）
-    我方框 128x44：HP 条左端多一个「HP」标签 + 一行 HP 数字
+    对手框 128x32：名字 + Lv + HP 条
+    我方框 128x44：再多一行 HP 数字
 
+    **两个框都有 HP 标签**（原版对手框其实没有，这是本项目统一加的）。
     **我方框高度与原版不同**：原版的 128x64 是因为最下面压着一条 EXP 条，
     本项目不用 EXP，压到 44 才紧凑——三行（名字 / HP 条 / 数字）正好填满。
     """
     frlg_frame(d, x, y, w, h)
-    fy = 1 if hp_text else 1          # 名字行
-    font.draw(img, x + 8, y + fy, name, HB_TEXT)
-    lv_x = x + w - 8 - font.measure(lv)
-    font.draw(img, lv_x, y + fy, lv, HB_TEXT)
 
-    hp_row(font, img, d, x + 8, y + 16, w - 16, HP_ROW_H, ratio,
-           label=bool(hp_text))
+    font.draw(img, x + 8, y + NAME_ROW_DY, name, HB_TEXT)
+    lv_x = x + w - 8 - font.measure(lv)
+    font.draw(img, lv_x, y + NAME_ROW_DY, lv, HB_TEXT)
+
+    hp_row(font, img, d, x + 8, y + HP_ROW_DY, w - 16, HP_ROW_H, ratio,
+           label=True, label_font=label_font)
 
     if hp_text:
-        font.draw(img, x + w - 8 - font.measure(hp_text), y + 27,
+        font.draw(img, x + w - 8 - font.measure(hp_text), y + NUM_ROW_DY,
                   hp_text, HB_TEXT)
 
 
@@ -342,7 +371,7 @@ def check_charset(font, strings, label):
 
 # ---------------------------------------------------------------- 三个图
 
-def make_hero(f_ui, f_lvgl, sprites, names, scale):
+def make_hero(f_ui, f_lvgl, f_hp, sprites, names, scale):
     """
     240x320 战斗界面，**按三代（火红/叶绿）原版版式重画**。
 
@@ -350,8 +379,8 @@ def make_hero(f_ui, f_lvgl, sprites, names, scale):
 
     | 项 | 值 | 出处 |
     |---|---|---|
-    | 对手血条框 | 128x32，左上角贴边 (0,0) | OAM `SPRITE_SHAPE(64x64)` x2 精灵拼合 |
-    | 我方血条框 | 128x44，右下角贴边 (112,108) | 原版为 128x64，本项目去掉 EXP 条后压到 44 |
+    | 对手血条框 | 128x32，左上角内缩 (2,2) | OAM `SPRITE_SHAPE(64x64)` x2 精灵拼合 |
+    | 我方血条框 | 128x44，右下角内缩 (110,110) | 原版为 128x64，本项目去掉 EXP 条后压到 44 |
     | 网格 | 左上 / 右下**对角**摆放 | 原版就是对角，两框各占半屏宽 |
     | 框体配色 | 米白填充 + 深灰描边 + 右下墨绿投影 | `healthbox.pal` |
     | HP 条 | 双色立体（上行高光、下行基色）+ 深色槽；「HP」标签嵌在条左端 | `healthbar.pal` + 原版图形 |
@@ -408,13 +437,14 @@ def make_hero(f_ui, f_lvgl, sprites, names, scale):
     img.paste(foe, FOE_XY, foe)
     img.paste(me, ME_XY, me)
 
-    # ---- 两个血条框：对角贴边，尺寸照原版 ----
+    # ---- 两个血条框：对角摆放，尺寸照原版，但离屏幕边留 2px 缝隙 ----
     # 对手：左上，128x32
-    healthbox(f_ui, img, d, 0, 0, 128, 32,
-              names["metagross"], "Lv50", 0.72)
-    # 我方：右下，128x64（多 HP 数字与 EXP 条）
-    healthbox(f_ui, img, d, 112, 108, 128, 44,
-              names["charizard"], "Lv50", 0.44, hp_text="68/153")
+    healthbox(f_ui, img, d, HP_INSET, HP_INSET, 128, 32,
+              names["metagross"], "Lv50", 0.72, label_font=f_hp)
+    # 我方：右下，128x44（多一行 HP 数字）
+    healthbox(f_ui, img, d, SCREEN_W - 128 - HP_INSET, 110, 128, 44,
+              names["charizard"], "Lv50", 0.44, hp_text="68/153",
+              label_font=f_hp)
 
     # ---- 下半屏：对话框 + 招式菜单 + 状态行 ----
     # 日志框
@@ -539,7 +569,8 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
 
     f_lvgl = LVGLFont(ROOT / "gen/font_app_16.c", bpp=4)   # 对话框用
-    f_ui = LVGLFont(ROOT / "gen/font_app_12.c", bpp=4)     # 血条框用（小一号）
+    f_ui = LVGLFont(ROOT / "gen/font_app_12.c", bpp=4)     # 血条框内文字
+    f_hp = LVGLFont(ROOT / "gen/font_hp_10.c", bpp=4)      # HP 标签（再小一号）
     for nm, f in (("16px", f_lvgl), ("12px", f_ui)):
         print(f"LVGL {nm} 字体：字形 {len(f.glyphs)}，"
               f"line_height={f.line_height}")
@@ -566,6 +597,7 @@ def main():
     box_strings = [s for s in hero_strings
                    if s in ("巨金怪", "喷火龙", "Lv50", "68/153", "HP")]
     n_box = check_charset(f_ui, box_strings, "hero.png 血条框（12px）")
+    check_charset(f_hp, ["HP"], "hero.png HP 标签（10px）")
     n_dlg = check_charset(f_lvgl, [s for s in hero_strings if s not in box_strings],
                           "hero.png 对话框（16px）")
     print(f"hero 文案：血条框 {n_box} 字 + 对话框 {n_dlg} 字，两套字库各自全覆盖")
@@ -592,7 +624,7 @@ def main():
     print(f"已解出 {len(sprites)} 张精灵图")
 
     if task in ("all", "hero"):
-        hero = make_hero(f_ui, f_lvgl, sprites, en2cn, args.scale)
+        hero = make_hero(f_ui, f_lvgl, f_hp, sprites, en2cn, args.scale)
         hero.save(out / "hero.png")
         print(f"hero.png          {hero.width}x{hero.height}")
 

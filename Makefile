@@ -119,7 +119,8 @@ font:
 	  (echo "用法: make font FONT=<中文字体路径.ttf>"; exit 1)
 	python tools/gen_font.py --font $(FONT)
 
-# 一次出两套字号：16px 给对话框，12px 给血条框（16px 在 128x32 的框里偏大）
+# 一次出三套字号：16px 给对话框，12px 给血条框的名字与数字，
+# 10px 只含 ASCII 段、专给血条框里的 HP 标签（位图仅 1.7 KB）
 lvgl-font:
 	@test -n "$(FONT)" || \
 	  (echo "用法: make lvgl-font FONT=<中文字体路径.ttf>"; exit 1)
@@ -127,6 +128,8 @@ lvgl-font:
 	  --out gen/font_app_16.c --name font_app_16 --size 16
 	python tools/gen_lvgl_font.py --font $(FONT) --chars gen/font_chars.txt \
 	  --out gen/font_app_12.c --name font_app_12 --size 12
+	python tools/gen_lvgl_font.py --font $(FONT) --symbols HP --no-subset \
+	  --out gen/font_hp_10.c --name font_hp_10 --size 10
 
 # 重出 README 配图。图里的精灵图与文字都从固件数据解出，所以数据一改
 # 就要重跑，不要手画。生成后顺带做一次字库覆盖校验。

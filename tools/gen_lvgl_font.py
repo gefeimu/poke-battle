@@ -219,7 +219,11 @@ def verify(out, chars, bpp, size):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--font", required=True, help="源字体（TTF/OTF）")
-    ap.add_argument("--chars", required=True, help="字符清单（gen/font_chars.txt）")
+    ap.add_argument("--chars", help="字符清单（gen/font_chars.txt）")
+    ap.add_argument("--symbols",
+                    help="直接用命令行给字符集，不用文件。用于只要几个字的"
+                         "极小字体，例如血条框里的 HP 标签：--symbols HP。"
+                         "ASCII 段由 --range 0x20-0x7F 另外带上，不用写进这里")
     ap.add_argument("--out", required=True, help="输出 .c 路径")
     ap.add_argument("--name", required=True, help="生成的 lv_font_t 变量名")
     ap.add_argument("--size", type=int, default=16, help="字号，默认 16")
@@ -231,8 +235,14 @@ def main():
     if not font.exists():
         sys.exit(f"源字体不存在：{font}")
 
-    chars = read_chars(args.chars)
-    print(f"字符清单：{len(chars)} 字")
+    if args.symbols:
+        chars = "".join(sorted(set(c for c in args.symbols if not c.isspace())))
+        print(f"字符集（命令行给定）：{len(chars)} 字「{chars}」")
+    elif args.chars:
+        chars = read_chars(args.chars)
+        print(f"字符清单：{len(chars)} 字")
+    else:
+        sys.exit("需要 --chars <清单文件> 或 --symbols <字符集>")
     print(f"源字体：{font.name}（{font.stat().st_size/1048576:.2f} MB）")
 
     tmpdir = None
