@@ -66,6 +66,11 @@ DLG_EDGE_HI = (106, 139, 189)
 DLG_TEXT = (41, 49, 49)
 DLG_GOLD = (156, 123, 24)
 
+# HP 标签（嵌在条左端，原版就是这样）
+HP_LABEL = (255, 230, 0)      # healthbox.pal[9] 框内的黄
+HP_LABEL_EDGE = (0, 0, 0)     # 标签黑描边
+HP_ROW_H = 11                 # HP 行高度（标签嵌在条内，所以比纯条高）
+
 # 选中项高亮
 SEL_FILL = (255, 230, 57)
 SEL_EDGE = (205, 172, 8)
@@ -225,32 +230,50 @@ def hp_color(ratio):
     return BAR_RED
 
 
-def hp_bar(d, x, y, w, h, ratio):
+def draw_outlined(font, img, x, y, text, fill, edge):
+    """先四向偏移画描边色，再画本体。小字号下描边能显著提升可读性。"""
+    for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+        font.draw(img, x + dx, y + dy, text, edge)
+    font.draw(img, x, y, text, fill)
+
+
+def hp_row(font, img, d, x, y, w, h, ratio, label=True):
     """
-    画 FRLG 风格的 HP 条。
+    HP 条——**「HP」标签嵌在条的左端，整体是一个元素**（原版即如此）。
+
+        [ 深色胶囊 ......................... ]
+         └ 左端：金色「HP」（黑描边）
+         └ 其后：彩色填充，上下各内缩 2px
 
     两个要点：
-      1. **双色立体**——原版不是单色矩形，而是上行高光、下行基色，外面套深色槽。
+      1. **标签与条是一个整体**，不是「左边一个 HP 文字 + 右边一条独立的条」。
+         分开画会显得散，且横向多占一个标签的宽度。
+      2. **填充是双色立体**——原版不是单色矩形，而是上行高光、下行基色。
          按单色画会明显「不像」。
-      2. **四角圆角**——两端收成胶囊形，与血条框的圆角风格统一。
-         原版是方角，这里按需求改成圆角。
     """
-    r = max(1, h // 2)
-    d.rounded_rectangle([x, y, x + w - 1, y + h - 1], radius=r, fill=BAR_TRACK)
+    d.rounded_rectangle([x, y, x + w - 1, y + h - 1],
+                        radius=max(1, h // 2), fill=BAR_TRACK)
 
-    inner_w = w - 2
+    fx = x + 2
+    if label:
+        # ASCII 字形的墨迹从 draw_y+3 起、高 9px；要让它竖直居中于胶囊内
+        draw_outlined(font, img, x + 4, y + (h - 9) // 2 - 3, "HP",
+                      HP_LABEL, HP_LABEL_EDGE)
+        fx = x + 4 + font.measure("HP") + 6
+
+    inner_w = (x + w - 4) - fx
+    if inner_w < 5:
+        return
     fill_w = max(0, min(inner_w, int(round(inner_w * ratio))))
-    if fill_w < 3:
+    if fill_w < 5:
         return
 
     hi, lo = hp_color(ratio)
-    x1, y1 = x + 1, y + 1
-    x2, y2 = x + fill_w, y + h - 2
-    r2 = max(1, (h - 2) // 2)
-    d.rounded_rectangle([x1, y1, x2, y2], radius=r2, fill=lo)
-    # 上缘高光：两端各收进 2px，避免方角从胶囊形的圆弧里戳出来
-    if fill_w > 5:
-        d.rectangle([x1 + 2, y1, x2 - 2, y1 + max(0, h // 3 - 1)], fill=hi)
+    x2 = fx + fill_w - 1
+    d.rounded_rectangle([fx, y + 2, x2, y + h - 3],
+                        radius=max(1, (h - 4) // 2), fill=lo)
+    if fill_w > 7:
+        d.rectangle([fx + 2, y + 2, x2 - 2, y + 3], fill=hi)
 
 
 def frlg_frame(d, x, y, w, h, radius=5):
@@ -261,40 +284,27 @@ def frlg_frame(d, x, y, w, h, radius=5):
                         radius=radius, fill=HB_FILL, outline=HB_EDGE, width=2)
 
 
-HP_BAR_H = 5        # 条高（原版约 8，按需求调到 5）
-
-
 def healthbox(font, img, d, x, y, w, h, name, lv, ratio, hp_text=None):
     """
     一个完整的血条框。`font` 传 12px 那套（16px 在小框里明显偏大）。
 
     对手框 128x32：名字 + Lv + HP 条（原版对手框不显示数字）
-    我方框 128x48：多「HP」标签和一行 HP 数字
+    我方框 128x44：HP 条左端多一个「HP」标签 + 一行 HP 数字
 
     **我方框高度与原版不同**：原版的 128x64 是因为最下面压着一条 EXP 条，
-    本项目不用 EXP，所以压到 48——三行（名字 / HP 条 / 数字）正好填满，
-    不然下方会留一块空白。
+    本项目不用 EXP，压到 44 才紧凑——三行（名字 / HP 条 / 数字）正好填满。
     """
     frlg_frame(d, x, y, w, h)
-
-    if hp_text:
-        name_y, bar_y, num_y = 3, 20, 31
-    else:
-        name_y, bar_y, num_y = 3, 20, 0
-    font.draw(img, x + 8, y + name_y, name, HB_TEXT)          # 名字
+    fy = 1 if hp_text else 1          # 名字行
+    font.draw(img, x + 8, y + fy, name, HB_TEXT)
     lv_x = x + w - 8 - font.measure(lv)
-    font.draw(img, lv_x, y + name_y, lv, HB_TEXT)             # 等级右对齐
+    font.draw(img, lv_x, y + fy, lv, HB_TEXT)
+
+    hp_row(font, img, d, x + 8, y + 16, w - 16, HP_ROW_H, ratio,
+           label=bool(hp_text))
 
     if hp_text:
-        # 我方框：左边标「HP」，条相应缩短；标签与条垂直居中对齐
-        font.draw(img, x + 8, y + bar_y - 5, "HP", HB_TEXT)
-        bar_x = x + 8 + font.measure("HP") + 5
-    else:
-        bar_x = x + 8
-    hp_bar(d, bar_x, y + bar_y, (x + w - 8) - bar_x, HP_BAR_H, ratio)
-
-    if hp_text:
-        font.draw(img, x + w - 8 - font.measure(hp_text), y + num_y,
+        font.draw(img, x + w - 8 - font.measure(hp_text), y + 27,
                   hp_text, HB_TEXT)
 
 
@@ -341,10 +351,10 @@ def make_hero(f_ui, f_lvgl, sprites, names, scale):
     | 项 | 值 | 出处 |
     |---|---|---|
     | 对手血条框 | 128x32，左上角贴边 (0,0) | OAM `SPRITE_SHAPE(64x64)` x2 精灵拼合 |
-    | 我方血条框 | 128x48，右下角贴边 (112,104) | 原版为 128x64，本项目去掉 EXP 条后压到 48 |
+    | 我方血条框 | 128x44，右下角贴边 (112,108) | 原版为 128x64，本项目去掉 EXP 条后压到 44 |
     | 网格 | 左上 / 右下**对角**摆放 | 原版就是对角，两框各占半屏宽 |
     | 框体配色 | 米白填充 + 深灰描边 + 右下墨绿投影 | `healthbox.pal` |
-    | HP 条 | 双色立体（上行高光、下行基色）+ 深色槽 | `healthbar.pal` |
+    | HP 条 | 双色立体（上行高光、下行基色）+ 深色槽；「HP」标签嵌在条左端 | `healthbar.pal` + 原版图形 |
     | 对话框 | 白底 + 深蓝外框 + 浅蓝内框 | `textbox1.pal` |
 
     屏幕是 240x320，正好是 GBA 240x160 的两倍，所以：
@@ -403,7 +413,7 @@ def make_hero(f_ui, f_lvgl, sprites, names, scale):
     healthbox(f_ui, img, d, 0, 0, 128, 32,
               names["metagross"], "Lv50", 0.72)
     # 我方：右下，128x64（多 HP 数字与 EXP 条）
-    healthbox(f_ui, img, d, 112, 104, 128, 48,
+    healthbox(f_ui, img, d, 112, 108, 128, 44,
               names["charizard"], "Lv50", 0.44, hp_text="68/153")
 
     # ---- 下半屏：对话框 + 招式菜单 + 状态行 ----
