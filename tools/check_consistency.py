@@ -1,5 +1,5 @@
 """
-check_consistency.py - 精灵图相关代码/文档的交叉一致性检查
+check_consistency.py - 跨文件/跨实现的交叉一致性检查
 
 为什么需要这个脚本
 ------------------
@@ -10,6 +10,11 @@ gen/poke_sprites.c 的文件头注释。这 6 处互相矛盾过，而且**没�
 
 文档对不上顶多是误导，但「数据坏了而文档也跟着错」就没人能自查了。
 所以把「哪些值必须一致」写成断言，让 `make test` 之外的独立入口也能跑。
+
+后来又长出两组「同一份数值出现在两处」的检查：
+  [12] 固件渲染层（C）与 PC 预览（Python）的版式常量
+  [13] 生成的字库数据与 lv_font_conv 源文件的度量
+  [14] 输入层的电压窗口/时序与官方 BSP 的数值
 
 用法：python tools/check_consistency.py
 """
@@ -150,7 +155,7 @@ def main():
     print("\n[9] README 测试计数")
     counts = [("data_selfcheck", 83), ("test_calc", 83), ("test_battle", 100),
               ("test_ai", 19), ("test_sprites", 14), ("test_font", 25),
-              ("test_render", 79)]
+              ("test_render", 79), ("test_input", 51), ("test_ui", 94)]
     for name, n in counts:
         check(f"{n} 项" in rd, f"README 记录 {name} = {n} 项")
 
@@ -286,6 +291,48 @@ def main():
     for ident in ("kFontApp16", "kFontApp12", "kFontHp10"):
         check(f"const BitmapFont {ident} =" in fd,
               f"gen/poke_font_data.c 导出了 {ident}")
+
+    # ---- 14. 输入层的电压窗口/时序与官方 BSP 一致 ----
+    #
+    # 这一层的数值全部抄自官方仓，而且**每一个抄错都不报错**：窗口边界差
+    # 1 mV 就是按键偶尔判成另一个键；阈值少写一个 0 就是长按永远不触发。
+    # 所以把「哪几个数必须等于多少」写成断言，顺带钉住「实现里不许出现
+    # 裸数字」—— 数字一旦从 .h 抄进 .c，就会和 .h 悄悄漂移。
+    print("\n[14] 输入层常量与官方 BSP 一致")
+    pin = read("src/poke_input.h")
+    pim = read("src/poke_input.c")
+    sth = read("src/poke_ui_state.h")
+    stc = read("src/poke_ui_state.c")
+
+    # 预期值来自 components/bsp/include/bsp_pins.h 与官方 fork 的键位锁：
+    #   BSP_BTN_MV_TABLE = { {0,150}, {150,447}, {447,1900} }
+    #   BSP_BTN_LONG_PRESS_MS = 500
+    #   键位锁 40 / 120 / 120
+    for name, want in [("KEY_MV_UP_MAX", 150), ("KEY_MV_DOWN_MAX", 447),
+                       ("KEY_MV_OK_MAX", 1900), ("KEY_PRESS_CONFIRM_MS", 40),
+                       ("KEY_LOCK_SWITCH_MS", 120), ("KEY_LONG_PRESS_MS", 500)]:
+        m = re.search(rf"#define\s+{name}\s+(\d+)", pin)
+        check(bool(m) and int(m.group(1)) == want,
+              f"{name} = {m.group(1) if m else '缺失'}（官方值 {want}）")
+        check(name in pim, f"poke_input.c 用 {name} 判定，没有裸数字")
+
+    # 连发节奏属于应用自己的 tick（官方文档明确说不归驱动管）
+    for name, want in [("UI_REPEAT_DELAY_MS", 400), ("UI_REPEAT_RATE_MS", 120)]:
+        m = re.search(rf"#define\s+{name}\s+(\d+)", sth)
+        check(bool(m) and int(m.group(1)) == want,
+              f"{name} = {m.group(1) if m else '缺失'}")
+        check(name in stc, f"poke_ui_state.c 用 {name}，没有裸数字")
+
+    # 出处要写下来 —— 这几个数是查证来的，不是估的
+    for token in ("three-key-input-event-semantics",
+                  "adc-ladder-keypad-long-press-misread", "bsp_pins.h"):
+        check(token in pin, f"poke_input.h 注明了出处 {token}")
+    for token in ("150", "447", "1900", "500 ms", "40 ms", "120 ms", "2959"):
+        check(token in rd, f"README 记录了输入层依据 {token}")
+    check("键位锁" in rd and "键位锁" in pin,
+          "README 与源码都写了「键位锁」这一层")
+    check("读失败" in rd and "读失败" in pin,
+          "README 与源码都写了「ADC 读失败当未按下」")
 
     print(f"\n=== 结果: {g_fail} 处不一致 ===")
     return 0 if g_fail == 0 else 1

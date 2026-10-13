@@ -45,9 +45,13 @@ SRC_AI = $(SRC) src/poke_ai.c
 RENDER_SRC = src/poke_render.c src/poke_font.c src/poke_ui.c \
              gen/poke_font_data.c gen/poke_sprites.c gen/poke_species.c
 
+# 输入层与界面状态机：既不吃引擎，也不吃渲染层 —— 上游只有按键事件。
+# 这两个是唯一「跑一遍不到一毫秒」的测试，改完随手就能重跑。
+UI_SRC    = src/poke_input.c src/poke_ui_state.c
+
 BUILD = build
 TESTS = data_selfcheck test_calc test_battle test_ai test_sprites test_font \
-        test_render
+        test_render test_input test_ui
 
 .PHONY: all test check-consistency bench types sprites sprites-preview \
         font lvgl-font lvgl-font-to-c font-preview readme-images \
@@ -85,6 +89,16 @@ $(BUILD)/test_font: test/test_font.c $(FONT_DATA) | $(BUILD)
 # 「只能看图发现」的（配色/版式）用取点验证。
 $(BUILD)/test_render: test/test_render.c $(RENDER_SRC) | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) -o $@ $< $(RENDER_SRC)
+
+# 三键驱动自检：喂「电压序列 + 毫秒时基」，断言窗口边界/去抖/长按。
+#   注意这里**故意不带 TESTFLAGS**：输入层没有任何抽签，
+#   带上反而会引入没用的开关。
+$(BUILD)/test_input: test/test_input.c src/poke_input.c | $(BUILD)
+	$(CC) $(CFLAGS) $(INC) -o $@ $< src/poke_input.c
+
+# 界面状态机自检：喂按键序列，断言界面/光标/滚动窗口/吐出的动作。
+$(BUILD)/test_ui: test/test_ui.c $(UI_SRC) | $(BUILD)
+	$(CC) $(CFLAGS) $(INC) -o $@ $< $(UI_SRC)
 
 $(BUILD)/bench_ai: test/bench_ai.c $(SRC_AI) | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) $(TESTFLAGS) -o $@ $< $(SRC_AI)
