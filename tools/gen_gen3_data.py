@@ -7,7 +7,7 @@
 设计要点：
 - 只保留三代（Gen 1-3，national_index 1..386）相关内容，控制体积
 - 招式含 effect_id，映射到本地的 effect_kind 枚举，引擎按 kind 分派
-- 属性 18 种完整克制表由 CSV 的 damage_relations 派生（见 gen_types.py）
+- 属性 18 种完整克制表由 CSV type_efficacy.csv 派生（见 tools/type_chart.py）
 - 表结构固定宽度，便于 ESP32 上直接索引
 
 用法：
@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT / "tools") not in sys.path:
     sys.path.insert(0, str(ROOT / "tools"))
 from zh_names import load_names
+import type_chart
 CSV = ROOT / "data" / "csv"
 GEN = ROOT / "gen"
 GEN.mkdir(parents=True, exist_ok=True)
@@ -695,7 +696,7 @@ zh_natures = {}
 
 def emit_types(type_list):
     lines = [
-        "/* 由 tools/gen_gen3_data.py 自动生成 */",
+        type_chart.BANNER,
         "#ifndef POKE_TYPES_H",
         "#define POKE_TYPES_H",
         "",
@@ -719,47 +720,26 @@ def emit_types(type_list):
               ""]
     (GEN / "poke_types.h").write_text("\n".join(lines), encoding="utf-8")
 
-    # 克制表：从已知 Gen3 关系硬编码构建（Veekun 的 damage_relations 在 type_names 无此字段）
+    # 克制表：**不手写**，直接从 Veekun 的 type_efficacy.csv 派生。
+    # 这里曾经硬编码过一份，结果有 14 处与官方不符（火打钢写成了 0.5x 等），
+    # 而"回归断言"又是照同一份错表写的，两边互相印证、谁都没发现。
+    # 数据只认上游 CSV，见 tools/type_chart.py 里的说明。
     idx = {name: i for i, (tid, name) in enumerate(type_list)}
-
-    # Gen VI 克制关系（攻击方 -> {守方: 倍率}），含 Fairy 与钢/幽灵/恶关系。
-    # 只列出 != 1.0 的关系，未列出的即 1.0。
-    chart = {
-        "Normal":{"Rock": .5, "Ghost": 0},
-        "Fighting":{"Normal": 2, "Ice": 2, "Poison": .5, "Flying": .5, "Psychic": .5, "Bug": .5, "Rock": 2, "Ghost": 0, "Dark": 2, "Steel": 2, "Fairy": .5},
-        # 飞行对草/毒都是 1.0（早期误写为 2.0 会让飞行系打草/毒打出假克制）
-        "Flying":{"Fighting": 2, "Bug": 2, "Rock": .5, "Electric": .5, "Steel": .5},
-        "Poison":{"Poison": .5, "Ground": .5, "Rock": .5, "Ghost": .5, "Steel": 0, "Fairy": 2},
-        "Ground":{"Flying": 0, "Poison": 2, "Rock": 2, "Bug": .5, "Steel": 2, "Fire": 2, "Grass": .5, "Electric": 2},
-        "Rock":{"Fighting": 2, "Flying": 2, "Ground": .5, "Bug": 2, "Steel": .5, "Fire": 2, "Ice": 2},
-        "Bug":{"Fighting": .5, "Flying": .5, "Poison": .5, "Ghost": .5, "Dark": 2, "Steel": .5, "Fire": .5, "Grass": 2, "Psychic": 2},
-        "Ghost":{"Normal": 0, "Psychic": 2, "Ghost": 2, "Dark": .5},
-        "Dark":{"Fighting": .5, "Psychic": 2, "Ghost": 2, "Dark": .5, "Fairy": .5},
-        "Steel":{"Flying": .5, "Poison": 0, "Rock": 2, "Bug": .5, "Steel": .5, "Fairy": 2, "Ice": 2, "Fire": .5},
-        # 火打钢是 0.5x（钢抗火），早期误写为 2.0
-        "Fire":{"Rock": .5, "Bug": 2, "Steel": .5, "Grass": 2, "Ice": 2, "Dragon": .5, "Fire": .5, "Water": .5},
-        "Water":{"Ground": 2, "Rock": 2, "Fire": 2, "Water": .5, "Grass": 2, "Dragon": .5},
-        "Grass":{"Flying": .5, "Poison": .5, "Ground": 2, "Rock": 2, "Bug": 2, "Steel": .5, "Fire": .5, "Water": 2, "Grass": .5, "Dragon": .5},
-        "Electric":{"Flying": 2, "Ground": 0, "Water": 2, "Grass": .5, "Electric": .5, "Dragon": .5},
-        # Gen VI 起超能力打妖精 2x
-        "Psychic":{"Fighting": 2, "Poison": 2, "Psychic": .5, "Dark": 0, "Steel": .5, "Fairy": 2},
-        "Ice":{"Flying": 2, "Ground": 2, "Water": .5, "Grass": 2, "Ice": .5, "Dragon": 2, "Steel": .5, "Fire": .5},
-        "Dragon":{"Dragon": 2, "Steel": .5, "Fairy": 0},
-        "Fairy":{"Fighting": 2, "Poison": .5, "Dragon": 2, "Dark": 2, "Steel": .5, "Fire": .5},
-    }
+    chart = type_chart.load_matrix()
+    if set(type_chart.TYPES) != set(idx):
+        raise SystemExit(
+            "type_list 的属性集合与 type_chart.TYPES 不一致，"
+            "克制表的行列会对不上，停在这里比生成错表好")
 
     n = len(type_list)
     lines = [
-        "/* 由 tools/gen_gen3_data.py 自动生成 */",
+        type_chart.BANNER,
         '#include "poke_types.h"',
         "",
         f"const uint8_t kTypeEffect[TYPE_MATRIX_SIZE][TYPE_MATRIX_SIZE] = {{",
     ]
     for tid, name in type_list:
-        row = [10] * n
-        for target, mult in chart.get(name, {}).items():
-            if target in idx:
-                row[idx[target]] = int(round(mult * 10))
+        row = chart[idx[name]]
         lines.append("    { " + ", ".join(f"{v:2d}" for v in row) + f" }},  /* {name} */")
     lines += ["};", "", "const char *const kTypeNames[TYPE_COUNT] = {"]
     for tid, name in type_list:

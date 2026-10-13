@@ -65,6 +65,10 @@ bool ability_immune_ohko(uint8_t kind);
 
 /* ---- 特性名 ---- */
 
+/*
+ * 特性名，**中文**。这个字符串会原样进战斗日志、再显示在对话框里，
+ * 所以不能用 kAbilities[].name（那是英文标识符，写进中文界面很奇怪）。
+ */
 const char *ability_name(uint8_t kind);
 
 #endif /* POKE_ABILITY_H */

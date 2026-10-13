@@ -8,7 +8,14 @@ build/
 
 # ---- 第三方数据源（体积大，按 docs/data-sources.md 自行下载）----
 # Veekun 的 CSV 数据集，约 12 MB，gen_gen3_data.py 的输入
-data/csv/
+#
+# 例外：type_efficacy.csv 只有 3 KB **随仓库入库**。它是属性克制表的唯一
+# 数据源，而那张表历史上手写错过 14 处（见 tools/type_chart.py）。
+# 让这份 CSV 跟着仓库走，才能在全新克隆上照样做全量校验。
+# 注意必须用 `data/csv/*` 而不是 `data/csv/`：后者会让 git 根本不进入该目录，
+# 底下的 `!` 例外永远不会生效。
+data/csv/*
+!data/csv/type_efficacy.csv
 # 字体源文件（得意黑，约 2.6 MB，SIL OFL 1.1）
 # 生成的 gen/font_app_16.c 已入库，所以构建不需要它
 data/fonts/

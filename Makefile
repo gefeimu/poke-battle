@@ -49,9 +49,30 @@ RENDER_SRC = src/poke_render.c src/poke_font.c src/poke_ui.c \
 # 这两个是唯一「跑一遍不到一毫秒」的测试，改完随手就能重跑。
 UI_SRC    = src/poke_input.c src/poke_ui_state.c
 
+# 会话层（把状态机接到引擎）：唯一一个「整机链路」的测试 —— 引擎、AI、
+# 状态机、字库（日志折行要量像素宽）全都要。所以它链接得最重，但换来的
+# 是「喂一串按键就能打完一整场 6v6 并断言每一处状态迁移」。
+# 注意这里**没有**渲染层：会话只吐 BattleScreen / MenuScreen（纯数据），
+# 不画像素。
+SESSION_SRC = src/poke_session.c src/poke_ui_state.c src/poke_input.c \
+              src/poke_font.c
+
+# 屏幕导出工具要的是**整条链路**：引擎 + AI + 会话 + 渲染层。
+# **不能直接拼 $(SRC_AI) $(SESSION_SRC) $(RENDER_SRC)** —— 三份名单里有
+# 重复项（poke_font.c / poke_sprites.c / poke_species.c），同一份源码在一
+# 条编译命令里出现两次会重复定义符号，链接直接失败。所以这里显式列全，
+# 每份只出现一次。
+SCREEN_SRC = src/poke_battle.c src/poke_ability.c src/poke_item.c \
+             src/poke_calc.c src/poke_ai.c src/poke_session.c \
+             src/poke_ui_state.c src/poke_input.c src/poke_render.c \
+             src/poke_font.c src/poke_ui.c \
+             gen/poke_abilities.c gen/poke_items.c gen/poke_moves.c \
+             gen/poke_species.c gen/poke_types.c gen/poke_natures.c \
+             gen/poke_learnsets.c gen/poke_sprites.c gen/poke_font_data.c
+
 BUILD = build
 TESTS = data_selfcheck test_calc test_battle test_ai test_sprites test_font \
-        test_render test_input test_ui
+        test_render test_input test_ui test_session
 
 .PHONY: all test check-consistency bench types sprites sprites-preview \
         font lvgl-font lvgl-font-to-c font-preview readme-images \
@@ -100,10 +121,22 @@ $(BUILD)/test_input: test/test_input.c src/poke_input.c | $(BUILD)
 $(BUILD)/test_ui: test/test_ui.c $(UI_SRC) | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) -o $@ $< $(UI_SRC)
 
+# 会话层自检：喂按键序列跑完整场对局，断言引擎状态、日志播放游标、
+# 强制换人分支与结算。这是唯一需要「固定随机源」的界面侧测试 ——
+# 对手是 AI，不钉住抽签就没有可重放的结果。
+# 额外要 gen/poke_font_data.c：日志折行是量真实像素宽的，不是估字数。
+$(BUILD)/test_session: test/test_session.c $(SRC_AI) $(SESSION_SRC) \
+                       gen/poke_font_data.c | $(BUILD)
+	$(CC) $(CFLAGS) $(INC) $(TESTFLAGS) -o $@ $< $(SRC_AI) $(SESSION_SRC) \
+	      gen/poke_font_data.c
+
 $(BUILD)/bench_ai: test/bench_ai.c $(SRC_AI) | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) $(TESTFLAGS) -o $@ $< $(SRC_AI)
 
-test: check-consistency $(addprefix $(BUILD)/,$(TESTS))
+# 顺序有意义：先生成/编译全部测试，再跑一致性检查。
+# 检查里的「README 测试计数」是**实测**的（跑一遍二进制读它的汇总行），
+# 二进制还不存在就没得比。串行 make 会按左到右的顺序构建前置目标。
+test: $(addprefix $(BUILD)/,$(TESTS)) check-consistency
 	@for t in $(TESTS); do \
 	  echo "======== $$t ========"; \
 	  $(BUILD)/$$t || exit 1; \
@@ -171,16 +204,22 @@ lvgl-font-to-c:
 readme-images:
 	python tools/make_readme_images.py
 
-# 把固件渲染层画的战斗界面导成图片。
+# 把固件渲染层画的**七屏**界面导成图片。
 # 渲染的 bug 不崩溃、不报错，只是画出来不对 —— 只能看图发现。
-$(BUILD)/dump_screen: test/dump_screen.c $(RENDER_SRC) | $(BUILD)
-	$(CC) $(CFLAGS) $(INC) -o $@ $< $(RENDER_SRC)
+# 七屏各自的版式不同源（战斗界面照原版，菜单是自己定的），所以一屏一张图，
+# 混在一起看容易漏掉某一屏没画。
+$(BUILD)/dump_screen: test/dump_screen.c $(SCREEN_SRC) | $(BUILD)
+	$(CC) $(CFLAGS) $(INC) $(TESTFLAGS) -o $@ $< $(SCREEN_SRC)
+
+SCRIPTS_SCREENS = main team log battle action confirm switch result
 
 screen-preview: $(BUILD)/dump_screen
 	@mkdir -p data/screen_preview
-	$(BUILD)/dump_screen
-	python tools/ppm2png.py data/screen_preview/battle.ppm \
-	  data/screen_preview/battle.png --scale 3
+	$(BUILD)/dump_screen --all
+	@for n in $(SCRIPTS_SCREENS); do \
+	  python tools/ppm2png.py data/screen_preview/$$n.ppm \
+	    data/screen_preview/$$n.png --scale 3 || exit 1; \
+	done
 
 # 比对「固件渲染层」与「PC 预览」画的同一屏。
 # 两边是独立实现，允许 RGB565 量化与边缘 1px 的差异；

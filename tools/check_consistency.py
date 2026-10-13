@@ -15,10 +15,12 @@ gen/poke_sprites.c 的文件头注释。这 6 处互相矛盾过，而且**没�
   [12] 固件渲染层（C）与 PC 预览（Python）的版式常量
   [13] 生成的字库数据与 lv_font_conv 源文件的度量
   [14] 输入层的电压窗口/时序与官方 BSP 的数值
+  [15] 属性克制表与官方 CSV 全量比对
 
 用法：python tools/check_consistency.py
 """
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -54,6 +56,63 @@ def check(cond, msg):
 def read(rel):
     p = ROOT / rel
     return p.read_text(encoding="utf-8") if p.exists() else ""
+
+
+
+# ---- 各组测试的二进制名单（顺序即 README 表格的顺序）----
+TEST_NAMES = [
+    "data_selfcheck", "test_calc", "test_battle", "test_ai", "test_sprites",
+    "test_font", "test_render", "test_input", "test_ui", "test_session",
+]
+
+
+def find_test_binary(name):
+    """定位 build/<name> 的可执行文件，找不到返回 None。
+
+    **不要写成 ROOT/"build"/name 就完事**：本机是 MSYS/Git Bash 下的 MinGW
+    工具链，链接产出的名字带 `.exe`（build/test_ui.exe），不带扩展名的那个
+    文件**根本不存在**。曾经按无扩展名判断，于是十个测试全部 exists()==False，
+    整组 [9] 悄悄降级成十行 [warn] 还照样 exit 0 —— 一个「只做提醒、从不拦截」
+    的校验，比没有校验更糟，因为它看起来是绿的。
+
+    所以这里按「无扩展名 → .exe → 目录里任何 <name>.*」的顺序找，并且
+    调用方把「找不到」当**失败**处理。
+    """
+    build = ROOT / "build"
+    for cand in (build / name, build / f"{name}.exe"):
+        if cand.is_file():
+            return cand
+    # 兜底：某些工具链会加别的可执行后缀。
+    # **必须限定后缀白名单**：曾经写成「任意 build/<name>.*」，结果把手工
+    # 备份出来的 test_ai.exe.bak 也当成了测试本体 —— Windows 的 CreateProcess
+    # 不看扩展名，只要是合法 PE 就照跑，于是「删掉可执行文件」的验证照样全绿。
+    # 一个会把备份当产物的查找函数，等于没有查找。
+    for suf in (".bin", ".out", ".elf"):
+        p = build / f"{name}{suf}"
+        if p.is_file():
+            return p
+    return None
+
+
+def run_test_count(name):
+    """跑一遍 build/<name>，返回通过数；跑不成/有失败项返回 None。
+
+    各测试的汇总行格式不完全统一（有的带「结果:」有的不带），
+    所以只认 `N 通过, M 失败` 这一段。
+    """
+    exe = find_test_binary(name)
+    if exe is None:
+        return None
+    try:
+        r = subprocess.run([str(exe)], cwd=str(ROOT), capture_output=True,
+                           text=True, encoding="utf-8", errors="replace",
+                           timeout=600)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"(\d+) 通过,\s*(\d+) 失败", r.stdout)
+    if not m or int(m.group(2)) != 0:
+        return None
+    return m.group(1)
 
 
 def main():
@@ -151,16 +210,47 @@ def main():
     check("sprites-preview" in mk, "有 sprites-preview 目标")
     check("dump_sprites" in mk, "sprites-preview 依赖 dump_sprites")
 
-    # ---- 9. README 测试计数 ----
-    print("\n[9] README 测试计数")
-    counts = [("data_selfcheck", 83), ("test_calc", 83), ("test_battle", 100),
-              ("test_ai", 19), ("test_sprites", 14), ("test_font", 25),
-              ("test_render", 79), ("test_input", 51), ("test_ui", 118)]
-    for name, n in counts:
-        check(f"{n} 项" in rd, f"README 记录 {name} = {n} 项")
+    # ---- 9. README 测试计数（以实际跑出来的数字为准）----
+    #
+    # 这张清单原先是在这里手写的，于是和 README 各抄一份、必然会漂 ——
+    # 实际就漂过：test_calc 这里写 83 而真实是 84，README 另一处表里
+    # test_ui 写 94 而真实是 118。所以改成**跑一遍二进制、读它的汇总行**，
+    # README 里记的数字必须等于实测值。这和克制表那次是同一个教训：
+    # 能被实测的东西就不要手抄。
+    print("\n[9] README 测试计数 = 实测")
+    measured = []
+    for name in TEST_NAMES:
+        # 「找不到二进制」必须是 FAIL 而不是 warn：make test 里本组排在
+        # 各测试目标之后，跑不成的唯一原因就是构建/链接出了问题，这种时候
+        # 静默跳过会把「测试根本没编出来」伪装成「一切正常」。
+        if find_test_binary(name) is None:
+            check(False, f"build/{name} 不存在（先 make test 再跑本检查？）")
+            continue
+        n = run_test_count(name)
+        if n is None:
+            check(False, f"{name} 没能跑通（编译过但断言失败/摘要行缺失）")
+            continue
+        measured.append((name, int(n)))
 
-    total = sum(n for _, n in counts)
-    check(f"{total} 项断言" in rd, f"README 记录总计 {total} 项")
+    for name, n in measured:
+        row = re.search(rf"^\|\s*`{name}`\s*\|([^|]*)\|([^|]*)\|\s*(\d+)\s*\|",
+                        rd, re.M)
+        check(bool(row) and int(row.group(3)) == n,
+              f"README 表格里 {name} = {row.group(3) if row else '缺行'}"
+              f"（实测 {n}）")
+        check(f"{n} 项" in rd, f"README 正文提到 {name} 的 {n} 项")
+
+    check(len(measured) == len(TEST_NAMES),
+          f"{len(measured)}/{len(TEST_NAMES)} 个测试实测成功"
+          "（缺的那个说明构建或断言有问题，不能当通过）")
+    if len(measured) == len(TEST_NAMES):
+        total = sum(n for _, n in measured)
+        check(f"{total} 项断言" in rd, f"README 记录总计 {total} 项（实测合计）")
+        check(f"{total} 项断言全过" in rd or f"**{total} 项断言" in rd,
+              f"README 顶部写了 {total} 项断言全过")
+    else:
+        print(f"  [note] 只有 {len(measured)}/{len(TEST_NAMES)} 个测试跑成，"
+              "总计无法定论 —— 上面那条 FAIL 才是要看的东西")
 
     # ---- 10. 字库规格一致 ----
     print("\n[10] 中文字库规格")
@@ -333,6 +423,105 @@ def main():
           "README 与源码都写了「键位锁」这一层")
     check("读失败" in rd and "读失败" in pin,
           "README 与源码都写了「ADC 读失败当未按下」")
+
+    # ---- 15. 属性克制表与官方 CSV ----
+    #
+    # 这张表是**手写 + 自证式断言**这套做法的反面教材：它在两个生成器里各手写
+    # 了一份，而 regen_types.py 的「回归断言」又是照着手写表写的，于是错表和
+    # 错断言互相印证，`make test` 一直全绿，实际有 14 处与官方规则不符
+    # （最严重的是「火打钢」写成了 0.5x，本该是 2x）。
+    #
+    # 现在数据只认 data/csv/type_efficacy.csv，这里做 324 格全量比对；
+    # 另外把 22 条关键组合的**官方期望值**再独立写一遍对 CSV 校验 ——
+    # 万一 CSV 本身被改坏，这一层也能兜住。
+    print("\n[15] 属性克制表 = 官方 CSV（324 格）")
+    sys.path.insert(0, str(ROOT / "tools"))
+    import regen_types
+    import type_chart
+
+    matrix = type_chart.load_matrix()
+    check(len(matrix) == 18 and all(len(r) == 18 for r in matrix),
+          "CSV 给出 18x18 矩阵")
+    check(type_chart.EXPECTED_ROWS == 324, "CSV 组合数 = 324")
+
+    tc = read("gen/poke_types.c")
+    body = re.search(
+        r"kTypeEffect\[TYPE_MATRIX_SIZE\]\[TYPE_MATRIX_SIZE\] = \{(.*?)\n\};",
+        tc, re.S)
+    check(bool(body), "能解析 gen/poke_types.c 的 kTypeEffect")
+    if body:
+        rows = [[int(v) for v in r.split(",")]
+                for r in re.findall(r"\{([^{}]*)\},", body.group(1))]
+        check(len(rows) == 18, f"生成文件 18 行（实际 {len(rows)}）")
+        check(rows == matrix, "324 格与 data/csv/type_efficacy.csv 全等")
+        if rows != matrix:
+            for i, (a, b) in enumerate(zip(rows, matrix)):
+                if a != b:
+                    print(f"         {type_chart.TYPES[i]} 行: 文件 {a}")
+                    print(f"         {type_chart.TYPES[i]} 行: CSV  {b}")
+
+    # 官方期望值（与生成器里的清单同一份，不另抄一遍）
+    bad = 0
+    for atk, defenders, want, why in regen_types.REGRESSION:
+        got = type_chart.effectiveness(matrix, atk, defenders) / 10.0
+        if abs(got - want) > 1e-9:
+            bad += 1
+            print(f"  [FAIL] {why}: CSV 给 {got}x，官方 {want}x")
+    check(bad == 0,
+          f"关键组合 {len(regen_types.REGRESSION)} 条与官方规则一致")
+
+    for token in ("type_efficacy.csv", "type_chart.py"):
+        check(token in rd, f"README 记录了克制表来源 {token}")
+    check("type_efficacy" in read("tools/gen_gen3_data.py"),
+          "主生成器注明克制表来自 type_efficacy.csv")
+    check("chart = {" not in read("tools/gen_gen3_data.py")
+          and "CHART = {" not in read("tools/regen_types.py"),
+          "两个生成器里都不再有手写的克制表")
+
+    # ---- 16. 菜单版式与界面集合 ----
+    print("\n[16] 菜单版式与界面集合")
+    uh = read("src/poke_ui.h")
+    us = read("src/poke_ui_state.c")
+    ds = read("test/dump_screen.c")
+
+    # 16.1 一屏最多几行，必须装得下状态机里最大的那个界面。
+    # 状态机按 ui_screen_rows() 算滚动窗口，绘制按 UI_MENU_ROWS_MAX 留高度；
+    # 哪天状态机把某个界面加到 9 行，绘制就会把第 9 行画到状态行上 ——
+    # 光标移到了看得见、内容画不出来，这种 bug 只能靠两边对数抓。
+    m = re.search(r"#define\s+UI_MENU_ROWS_MAX\s+(\d+)", uh)
+    rows_max = int(m.group(1)) if m else 0
+    rows_map = dict(re.findall(
+        r"case\s+(UI_SCREEN_\w+):\s*return\s+(\d+);", us))
+    # ui_screen_rows 的 default 分支兜底成 1，不在 map 里；有枚举名却没有
+    # return 的才算漏
+    screens_in_fn = set(re.findall(r"case\s+(UI_SCREEN_\w+):", us))
+    missing = sorted(screens_in_fn - set(rows_map))
+    check(bool(rows_map) and not missing,
+          f"ui_screen_rows 的每个界面都有返回值（缺 {missing or '无'}）")
+    if rows_map:
+        want_max = max(int(v) for v in rows_map.values())
+        check(rows_max >= want_max,
+              f"UI_MENU_ROWS_MAX = {rows_max} 装得下最大界面 {want_max} 行")
+
+    # 16.2 dump_screen 的屏清单必须覆盖状态机的每个界面。
+    # 新加一个 UiScreen 而忘了导出/验收它，这里会点名。
+    m = re.search(r"static const char \*const kScreens\[\] = \{(.*?)\};",
+                  ds, re.S)
+    listed = set(re.findall(r'"(\w+)"', m.group(1))) if m else set()
+    # log 是会话的**阶段**不是状态机界面，映射成战斗界面
+    screens = {s.replace("UI_SCREEN_", "").lower() for s in screens_in_fn}
+    check(m is not None, "dump_screen 里有 kScreens 清单")
+    check(screens <= listed,
+          f"dump_screen 覆盖每个界面（缺 {sorted(screens - listed) or '无'}）")
+    check(listed - screens == {"log"},
+          f"清单里只有 log 不是状态机界面（多出 {sorted(listed - screens)}）")
+
+    # 16.3 会话层的分层必须覆盖弹层类界面。弹层是「盖在战斗界面上」的，
+    # 忘了在 ses_layer 里把某个界面归到 BATTLE_MENU，它就会被当成整屏菜单
+    # 画出来 —— 界面还能用，只是背后那块战斗画面凭空消失。
+    ses_c = read("src/poke_session.c")
+    for sc in ("UI_SCREEN_ACTION", "UI_SCREEN_CONFIRM"):
+        check(sc in ses_c, f"ses_layer 认识 {sc}")
 
     print(f"\n=== 结果: {g_fail} 处不一致 ===")
     return 0 if g_fail == 0 else 1

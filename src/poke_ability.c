@@ -27,10 +27,13 @@ const char *ability_name(uint8_t kind)
 {
     for (unsigned i = 0; i < ABILITY_COUNT; i++) {
         if (kAbilities[i].kind == kind) {
-            return kAbilities[i].name;
+            /* 中文名。表里的 name 是英文标识符（"Speed_Boost"），
+             * 直接显示在对话框里会很突兀 —— 见 poke_ability.h 的说明。 */
+            return kAbilities[i].name_cn ? kAbilities[i].name_cn
+                                         : kAbilities[i].name;
         }
     }
-    return "None";
+    return "无";
 }
 
 /* ---------- 天气特性 ---------- */

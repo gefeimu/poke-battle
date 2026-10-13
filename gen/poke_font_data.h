@@ -12,9 +12,9 @@
 
 #include "poke_font.h"
 
-/* font_app_16：4bpp，line_height=21，1282 条映射 */
+/* font_app_16：4bpp，line_height=21，1303 条映射 */
 extern const BitmapFont kFontApp16;
-/* font_app_12：4bpp，line_height=16，1282 条映射 */
+/* font_app_12：4bpp，line_height=16，1303 条映射 */
 extern const BitmapFont kFontApp12;
 /* font_hp_10：4bpp，line_height=12，95 条映射 */
 extern const BitmapFont kFontHp10;

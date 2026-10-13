@@ -480,7 +480,7 @@ def make_hero(f_ui, f_lvgl, f_hp, sprites, names, scale):
     # 状态行（原版把这条压在对话框里，我们单独给它一个框）
     dialog(d, 4, 288, 232, 28, radius=5)
     f_lvgl.draw(img, 14, 292, "PP 15/15", DLG_GOLD)
-    f_lvgl.draw(img, 100, 292, "选择招式   换人   认输", DLG_TEXT)
+    f_lvgl.draw(img, 100, 292, "选择招式   长按换人", DLG_TEXT)
 
     return img.resize((SCREEN_W * scale, SCREEN_H * scale), Image.NEAREST)
 
@@ -593,7 +593,7 @@ def main():
         "喷火龙 使用了 喷射火焰！", "会心一击！造成了 187 点伤害",
         "喷射火焰", "龙爪", "翅膀攻击", "剑舞",
         "15/15", "35/35", "20/20",
-        "选择招式   换人   认输   返回",
+        "选择招式   长按换人",
     ]
     # 血条框那句用 12px 那套校验，对话框用 16px，各自独立
     box_strings = [s for s in hero_strings

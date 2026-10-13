@@ -21,6 +21,7 @@
 #ifndef POKE_FONT_H
 #define POKE_FONT_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 /* 查不到字形时的返回值 */
@@ -85,5 +86,25 @@ uint32_t font_utf8_next(const char **p);
 
 /* 一行文本的像素宽度（adv_w 累加后一次取整，避免逐字取整的误差累积） */
 int font_text_width(const BitmapFont *f, const char *text);
+
+/*
+ * 贪心折行：把 text 折成最多两行，写进 l0 / l1（UTF-8，各自带终止符）。
+ * 返回**实际需要的行数**：
+ *   0  text 为空（两行都写成空串）
+ *   1  一行放得下
+ *   2  折成两行放得下
+ *   >2 两行仍放不下（l1 里是剩余部分，会超出 max_w）
+ *
+ * 最后那条是刻意留的信息而不是错误 —— 战斗日志的对话框只有两行，
+ * 「这段文字塞不进这个框」必须能被断言出来，而不是画出去才发现被裁掉。
+ *
+ * 断行只发生在字符之间（绝不把一个多字节字符劈开），也不需要英文那套
+ * 词边界规则：引擎的日志是中文短句，按字符断就够。空格按原宽占位。
+ *
+ * max_w 必须 > 0。**每行的第一个字符无条件放下**，否则一个比整行还宽的
+ * 字会让循环反复换行而死循环。
+ */
+int font_wrap2(const BitmapFont *f, const char *text, int max_w,
+               char *l0, size_t cap0, char *l1, size_t cap1);
 
 #endif /* POKE_FONT_H */

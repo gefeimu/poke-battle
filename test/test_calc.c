@@ -120,15 +120,20 @@ int main(void)
      * 以下期望值按 Gen VI 标准表核算（Fairy 已启用）。 */
     printf("\n[属性克制] 妙蛙种子(草/毒)\n");
     ok_u16(type_effectiveness(TYPE_FIRE, &bulba), 20, "火 -> 草/毒 = 2x * 1x = 2x");
-    ok_u16(type_effectiveness(TYPE_WATER, &bulba), 20, "水 -> 草/毒 = 2x * 1x = 2x");
+    /* 水打草只有 0.5x，打毒 1x —— 妙蛙种子**不惧水**。
+     * 这里曾写成 2x，等于让 AI 以为水炮能克制它。 */
+    ok_u16(type_effectiveness(TYPE_WATER, &bulba), 5, "水 -> 草/毒 = 0.5x * 1x = 0.5x");
     ok_u16(type_effectiveness(TYPE_GRASS, &bulba), 2, "草 -> 草/毒 = 0.5x * 0.5x = 0.25x");
     ok_u16(type_effectiveness(TYPE_ELECTRIC, &bulba), 5, "电 -> 草/毒 = 0.5x * 1x = 0.5x");
     ok_u16(type_effectiveness(TYPE_GROUND, &bulba), 10, "地面 -> 草/毒 = 0.5x * 2x = 1x");
     ok_u16(type_effectiveness(TYPE_ICE, &bulba), 20, "冰 -> 草/毒 = 2x * 1x = 2x");
-    /* 飞行对草和毒都�� 1.0x。此处曾长期被误写为 2x/2x=4x，
-     * 导致 AI 认为「飞行打草/毒」是克制招而选错。 */
-    ok_u16(type_effectiveness(TYPE_FLYING, &bulba), 10, "飞 -> 草/毒 = 1x * 1x = 1x");
-    ok_u16(type_effectiveness(TYPE_STEEL, &bulba), 0, "钢 -> 毒 = 0x");
+    /* 飞行打草 2x、打毒 1x（毒不抗飞行）→ 净 2x。
+     * 这里前后错过两次：先是写成 2x * 2x = 4x（把毒当成抗飞行），
+     * 后来"修"成 1x（把草也当成不弱飞行），都不对。 */
+    ok_u16(type_effectiveness(TYPE_FLYING, &bulba), 20, "飞 -> 草/毒 = 2x * 1x = 2x");
+    /* 钢打草 1x、打毒 1x。曾标成「钢 -> 毒 = 0x」—— 那是**攻守方向搞反**：
+     * 免疫的是毒打钢，不是钢打毒。 */
+    ok_u16(type_effectiveness(TYPE_STEEL, &bulba), 10, "钢 -> 草/毒 = 1x * 1x = 1x");
     ok_u16(type_effectiveness(TYPE_NORMAL, &bulba), 10, "普通 -> 草/毒 = 1x");
 
     printf("\n[属性克制] 喷火龙(火/飞)\n");
@@ -144,55 +149,63 @@ int main(void)
     ok_u16(type_effectiveness(TYPE_GROUND, &charz), 0, "地面打飞行 = 0x");
     ok_u16(type_effectiveness(TYPE_NORMAL, &charz), 10, "普通打火/飞 = 1x（正常打非幽灵）");
 
-    /* Gen VI 特有/易错关系的回归网。此前克制表里出现过
-     * 「飞行打草/毒=2x」「火打钢=2x」这类错误，会直接让 AI 选错招，
-     * 所以这里对 0x 免疫、双属性组合与钢/龙/妖精关系逐条钉住。
-     * 所有期望值由 tools/regen_types.py 的同一份 CHART 推导，改表时同步。 */
+    /* Gen VI 关系回归网。期望值全部按官方规则手写，并与
+     * `data/csv/type_efficacy.csv` 全量核对（见 tools/type_chart.py）。
+     *
+     * 这一块的历史值得记一笔：它最初是照着**同一张手写错表**写的，
+     * 于是错表和错断言互相印证，`make test` 一直全绿而表里有 14 处是错的。
+     * 现在数据只认官方 CSV，断言值手写但会被 CSV 反向校验 ——
+     * 两边只要有一边错就会红。 */
     printf("\n[属性克制] Gen VI 关系回归\n");
     {
-        /* 巨钳螳螂 = 虫/钢。钢的 0.5x 抵掉了大部分 2x，
-         * 这是一只「看着克制实则打不动」的典型，AI 必须能识别。 */
+        /* 巨钳螳螂 = 虫/钢，**火系 4 倍弱点**的教科书例子：
+         * 火打虫 2x × 火打钢 2x = 4x。
+         * 这里曾写着「钢的 0.5x 抵掉了大部分 2x，是一只看着克制实则打不动的
+         * 典型」并把期望值定成 1x —— 那句话本身就错了：钢**不抗火**，怕火。 */
         Statsheet scizor;
         statsheet_init(&scizor, 212, 50, 0);
-        ok_u16(type_effectiveness(TYPE_FIRE, &scizor), 10, "火 -> 虫/钢 = 2x * 0.5x = 1x（钢抗火）");
-        ok_u16(type_effectiveness(TYPE_ELECTRIC, &scizor), 10, "电 -> 虫/钢 = 2x * 0.5x = 1x（钢抗电）");
+        ok_u16(type_effectiveness(TYPE_FIRE, &scizor), 40, "火 -> 虫/钢 = 2x * 2x = 4x");
+        ok_u16(type_effectiveness(TYPE_ELECTRIC, &scizor), 10, "电 -> 虫/钢 = 1x * 1x = 1x");
         ok_u16(type_effectiveness(TYPE_ROCK, &scizor), 10, "岩 -> 虫/钢 = 2x * 0.5x = 1x（钢抗岩）");
         ok_u16(type_effectiveness(TYPE_FIGHTING, &scizor), 10, "斗 -> 虫/钢 = 0.5x * 2x = 1x（钢抗斗）");
         ok_u16(type_effectiveness(TYPE_GROUND, &scizor), 10, "地 -> 虫/钢 = 0.5x * 2x = 1x");
-        ok_u16(type_effectiveness(TYPE_FLYING, &scizor), 10, "飞 -> 虫/钢 = 2x * 0.5x = 1x");
-        /* 冰打虫 2x 但冰打钢只有 0.25x（冰抗钢），净 0.5x —— 最容易被想当然写成 2x */
-        ok_u16(type_effectiveness(TYPE_ICE, &scizor), 5, "冰 -> 虫/钢 = 2x * 0.25x = 0.5x");
-/* 草打虫 2x（表中曾误写 0.5x）* 草打钢 0.5x = 1x */
-        ok_u16(type_effectiveness(TYPE_GRASS, &scizor), 10, "草 -> 虫/钢 = 2x * 0.5x = 1x");
-        /* 钢打虫 0.5x * 钢打钢 0.5x = 0.25x */
-        ok_u16(type_effectiveness(TYPE_STEEL, &scizor), 2, "钢 -> 虫/钢 = 0.5x * 0.5x = 0.25x");
+        ok_u16(type_effectiveness(TYPE_FLYING, &scizor), 10, "飞 -> 虫/钢 = 2x * 0.5x = 1x（钢抗飞）");
+        /* 冰打虫 1x，冰打钢 0.5x（是钢抗冰，不是冰抗钢）→ 净 0.5x */
+        ok_u16(type_effectiveness(TYPE_ICE, &scizor), 5, "冰 -> 虫/钢 = 1x * 0.5x = 0.5x");
+        /* 草打虫 0.5x（虫抗草），草打钢 0.5x（钢抗草）→ 0.25x。
+         * 表里单格只有 0/5/10/20，两格相乘再整除 10 → 2（不是 25）。 */
+        ok_u16(type_effectiveness(TYPE_GRASS, &scizor), 2, "草 -> 虫/钢 = 0.5x * 0.5x = 0.25x");
+        /* 钢打虫 1x（虫不抗钢），钢打钢 0.5x → 0.5x */
+        ok_u16(type_effectiveness(TYPE_STEEL, &scizor), 5, "钢 -> 虫/钢 = 1x * 0.5x = 0.5x");
     }
 
     {
-        /* 巨金怪 = 钢/超能。地面 4x 的典型目标，火/超能极低。 */
+        /* 巨金怪 = 钢/超能。地面打钢 2x、打超能 1x → 2x；
+         * 火同理（钢怕火，超能不吃火）。 */
         Statsheet metagross;
         statsheet_init(&metagross, 376, 50, 0);
-        ok_u16(type_effectiveness(TYPE_GROUND, &metagross), 20, "地 -> 钢/超能 = 2x * 0.5x = 1x");
-        ok_u16(type_effectiveness(TYPE_FIRE, &metagross), 5, "火 -> 钢/超能 = 0.5x * 0.5x = 0.25x");
-        /* 超能打钢只被钢挡一半，并非免疫 */
+        ok_u16(type_effectiveness(TYPE_GROUND, &metagross), 20, "地 -> 钢/超能 = 2x * 1x = 2x");
+        ok_u16(type_effectiveness(TYPE_FIRE, &metagross), 20, "火 -> 钢/超能 = 2x * 1x = 2x");
+        /* 超能打钢 0.5x、打超能 0.5x → 0.25x；钢挡超能，不是免疫 */
         ok_u16(type_effectiveness(TYPE_PSYCHIC, &metagross), 2, "超能 -> 钢/超能 = 0.5x * 0.5x = 0.25x");
-        ok_u16(type_effectiveness(TYPE_WATER, &metagross), 10, "水 -> 钢/超能 = 1x * 0.5x = 0.5x");
+        ok_u16(type_effectiveness(TYPE_WATER, &metagross), 10, "水 -> 钢/超能 = 1x * 1x = 1x");
+        /* 真正的免疫在攻守的**另一个方向**：是毒打钢 0x */
+        ok_u16(type_effectiveness(TYPE_POISON, &metagross), 0, "毒 -> 钢/超能 = 0x * 1x = 0x");
     }
 
     {
-        /* 皮皮 = 妖精：Gen VI 新增属性，四条 2x + 龙 0x + 钢 2x。 */
+        /* 皮皮 = 妖精：Gen VI 新增属性。怕毒/钢 2x，龙免疫，虫/斗/恶 0.5x。 */
         Statsheet clefable;
         statsheet_init(&clefable, 35, 50, 0);
         ok_u16(type_effectiveness(TYPE_DRAGON, &clefable), 0, "龙 -> 妖精 = 0x（龙唯一免疫）");
         ok_u16(type_effectiveness(TYPE_POISON, &clefable), 20, "毒 -> 妖精 = 2x");
         ok_u16(type_effectiveness(TYPE_STEEL, &clefable), 20, "钢 -> 妖精 = 2x");
-        /* 虫打妖精是 1x（不是 Gen VI 的 2x），格斗打妖精只有 0.5x */
-        ok_u16(type_effectiveness(TYPE_BUG, &clefable), 10, "虫 -> 妖精 = 1x");
+        /* 妖精抗虫、抗格斗、抗恶 —— 虫打妖精是 0.5x，不是 1x */
+        ok_u16(type_effectiveness(TYPE_BUG, &clefable), 5, "虫 -> 妖精 = 0.5x");
         ok_u16(type_effectiveness(TYPE_FIGHTING, &clefable), 5, "斗 -> 妖精 = 0.5x");
-        /* 龙不克草，用来确认不是「所有龙系招都该有奇效」 */
+        /* 龙不克草，用来确认不是「所有龙系招式都该有奇效」 */
         ok_u16(type_effectiveness(TYPE_DRAGON, &bulba), 10, "龙 -> 草/毒 = 1x（龙不克草）");
     }
-
     /* 非法属性 id 不应越界读表，返回 1.0x */
     {
         Statsheet any;

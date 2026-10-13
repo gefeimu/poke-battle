@@ -7,11 +7,11 @@
 #define FONT_CELL_W 14
 #define FONT_CELL_H 14
 #define FONT_STRIDE 2   /* 每行字节数 = ceil(CELL_W/8)，行尾多余位为 0 */
-#define FONT_GLYPH_COUNT 1280
+#define FONT_GLYPH_COUNT 1296
 #define FONT_ALIGN 8
 
 /* 1bpp 位图，每字 28 字节（2 字节/行），行优先、高位在前 */
-extern const uint8_t kFontBitmap[35840];
+extern const uint8_t kFontBitmap[36288];
 
 /* UTF-8 字符串首字节 -> 字形索引映射表，覆盖常用汉字 */
 typedef struct {
@@ -20,7 +20,7 @@ typedef struct {
 } FontMapEntry;
 
 extern const FontMapEntry kFontMap[];
-#define FONT_MAP_COUNT 1274
+#define FONT_MAP_COUNT 1295
 
 /* 按码点查字形索引，查不到返回 0xFFFF */
 uint16_t font_lookup(uint32_t codepoint);

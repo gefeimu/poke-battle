@@ -4,6 +4,7 @@
 #include "poke_font.h"
 
 #include <stddef.h>
+#include <string.h>
 
 uint16_t font_glyph_index(const BitmapFont *f, uint32_t cp)
 {
@@ -94,4 +95,79 @@ int font_text_width(const BitmapFont *f, const char *text)
         }
     }
     return (int)((acc + 8) >> 4);
+}
+
+/* 单字的步进宽度，单位与 font_text_width 的累加器一致（1/16 像素）。
+ * 缺字按 0 算 —— 与渲染时「查不到就跳过」保持一致。 */
+static uint32_t glyph_adv(const BitmapFont *f, uint32_t cp)
+{
+    uint16_t gi = font_glyph_index(f, cp);
+    if (gi == FONT_GLYPH_NONE) {
+        return 0;
+    }
+    const GlyphDsc *g = font_glyph(f, gi);
+    return g ? g->adv_w : 0;
+}
+
+int font_wrap2(const BitmapFont *f, const char *text, int max_w,
+               char *l0, size_t cap0, char *l1, size_t cap1)
+{
+    if (l0 && cap0) {
+        l0[0] = '\0';
+    }
+    if (l1 && cap1) {
+        l1[0] = '\0';
+    }
+    if (!text || !*text || !l0 || cap0 < 2) {
+        return 0;
+    }
+
+    int      line = 0;      /* 0 = 还在第一行；>=1 = 已在最后一行 */
+    char    *dst  = l0;
+    size_t   cap  = cap0;
+    size_t   used = 0;
+    uint32_t acc  = 0;      /* 本行宽度累加，1/16 像素 */
+
+    const char *p = text;
+    while (*p) {
+        const char *ch_start = p;
+        uint32_t cp = font_utf8_next(&p);
+        size_t   nbytes = (size_t)(p - ch_start);
+
+        if (cp == '\n') {   /* 引擎日志里没有换行，留着是为了通用 */
+            if (line == 0) {
+                line = 1;
+                dst = l1;
+                cap = cap1;
+                used = 0;
+                acc = 0;
+            }
+            continue;
+        }
+
+        uint32_t adv = glyph_adv(f, cp);
+
+        /* 放不下就换行。注意判断里的 used > 0：**每行第一个字无条件放下**。 */
+        if (used > 0 && (int)((acc + adv + 8) >> 4) > max_w) {
+            if (line == 0) {
+                line = 1;
+                dst = l1;
+                cap = cap1;
+                used = 0;
+                acc = 0;
+            } else {
+                line = 2;   /* 第三行起不再折，剩下的全塞进 l1 */
+            }
+        }
+
+        if (dst == NULL || cap < 2 || used + nbytes + 1 > cap) {
+            break;          /* 缓冲区装不下，在字符边界截断 */
+        }
+        memcpy(dst + used, ch_start, nbytes);
+        used += nbytes;
+        dst[used] = '\0';
+        acc += adv;
+    }
+
+    return line + 1;
 }

@@ -496,6 +496,175 @@ static void test_ui_pixels(void)
           found_gold);
 }
 
+/* ---------------------------------------------------------------- 菜单取点 */
+
+/*
+ * 菜单界面的取点验证。与上面的战斗界面同一思路：版式是本项目自己定的
+ * （没有原版可抄），所以断言的不是「像不像原版」而是「各元素在它该在的
+ * 位置、且没有互相压住」。
+ *
+ * 这里刻意把期望坐标写成**字面量**而不是引用 poke_ui.c 里的宏 —— 那些宏
+ * 是 .c 的私有实现，测试引用它们就测不出「实现自己改了」。字面量写死，
+ * 改版式的人会在这里撞墙，被迫回头确认每一处。
+ */
+static void test_menu_pixels(void)
+{
+    printf("\n[菜单取点] 列表 / 弹层 / 结算的版式\n");
+
+    static const char *const items[3] = { "开始对战", "队伍配置", "第三项" };
+    UiFonts f = { .box = &kFontApp12, .dialog = &kFontApp16,
+                  .label = &kFontHp10 };
+
+    /* ---- 整屏列表：3 项，选中第 2 项 ---- */
+    MenuScreen m;
+    memset(&m, 0, sizeof(m));
+    m.title = "主菜单";
+    for (int i = 0; i < 3; i++) {
+        m.items[i] = items[i];
+    }
+    m.count = 3;
+    m.rows = 3;
+    m.selected = 1;
+    m.status_left = "2/3";
+    m.status_right = "选择   确定";
+
+    Surface s;
+    memset(g_fb, 0, sizeof(g_fb));
+    r_init(&s, g_fb, W, H, W);
+    ui_menu_screen(&s, &f, &m);
+
+    /* 标题横条：深蓝填充。横条 6..38，内缩 2px 后 8..36。 */
+    check(g_fb[20 * W + 8] == RGB565_C(41, 74, 123), "标题横条是深蓝填充");
+    /* 标题与列表板之间（y=42）应露出背景：天空是浅蓝，R 分量最低 */
+    uint16_t gap = g_fb[42 * W + 120];
+    int gr = (gap >> 11) & 0x1F, gg = (gap >> 5) & 0x3F, gb = gap & 0x1F;
+    check(gr < gg && gr < gb, "标题与列表板之间是背景（R 最低，实测 %d/%d/%d）",
+          gr, gg, gb);
+
+    /* 列表板：44 起，高 = 上下各 6 + 3 行 × 28 = 96，即 44..140 */
+    check(g_fb[52 * W + 200] == RGB565_C(255, 255, 255),
+          "未选中的行是白底（板内）");
+    /* 第 2 行 = y 78，高亮块 77..102、内缩 2px 后 79..100 */
+    check(g_fb[85 * W + 200] == RGB565_C(255, 230, 57), "选中的行是黄底");
+    check(g_fb[107 * W + 200] == RGB565_C(255, 255, 255),
+          "选中行下面那行仍是白底");
+    /* 板外（y=150）应回到背景 */
+    uint16_t below = g_fb[150 * W + 120];
+    int br = (below >> 11) & 0x1F;
+    int bg2 = (below >> 5) & 0x3F;
+    check(br < bg2, "列表板随内容长高，板下面是背景而不是空白板");
+
+    /* 状态行与战斗界面同一处版式：内部是白的。
+     * 取点要避开文字：左侧 "2/3" 到 x≈32，右侧提示从 STATUS_TEXT_X=100 起，
+     * 所以 x=60 这一段是纯底色。 */
+    check(g_fb[300 * W + 60] == RGB565_C(255, 255, 255), "状态行内部是白色");
+
+    /* ---- 滚动条：386 项、一屏 8 行 ---- */
+    MenuScreen big;
+    memset(&big, 0, sizeof(big));
+    big.title = "队伍配置";
+    big.count = 386;
+    big.rows = UI_MENU_ROWS_MAX;
+    big.selected = 0;
+    big.scrollbar = true;
+    big.status_right = "滚动   确定   长按返回";
+
+    memset(g_fb, 0, sizeof(g_fb));
+    r_init(&s, g_fb, W, H, W);
+    ui_menu_screen(&s, &f, &big);
+
+    /* 轨道 x = 4 + 232 - 9 = 227，宽 5；滑块最顶时 52 起（轨道 52..272） */
+    check(g_fb[54 * W + 229] == RGB565_C(65, 74, 123),
+          "滚动条滑块在顶部（top=0）");
+
+    big.top = big.count - big.rows;      /* 滚到底 */
+    memset(g_fb, 0, sizeof(g_fb));
+    r_init(&s, g_fb, W, H, W);
+    ui_menu_screen(&s, &f, &big);
+    check(g_fb[54 * W + 229] != RGB565_C(65, 74, 123),
+          "滚到底后顶部不再是滑块");
+    /* 滑块高 = max(10, 220*8/386=4) = 10，贴着轨道底 272，即 262..272 */
+    check(g_fb[265 * W + 229] == RGB565_C(65, 74, 123),
+          "滚到底后滑块贴着轨道底端");
+
+    /* ---- 结算：大字板的配色由结果决定 ---- */
+    MenuScreen res;
+    memset(&res, 0, sizeof(res));
+    res.title = "结果";
+    res.big = "胜利";
+    res.big_style = UI_BIG_WIN;
+    res.status_right = "确定继续";
+
+    memset(g_fb, 0, sizeof(g_fb));
+    r_init(&s, g_fb, W, H, W);
+    ui_menu_screen(&s, &f, &res);
+    check(g_fb[160 * W + 60] == RGB565_C(214, 60, 52), "胜利是红底");
+
+    res.big_style = UI_BIG_LOSE;
+    memset(g_fb, 0, sizeof(g_fb));
+    r_init(&s, g_fb, W, H, W);
+    ui_menu_screen(&s, &f, &res);
+    check(g_fb[160 * W + 60] == RGB565_C(58, 96, 168), "失败是蓝底");
+
+    /* ---- 弹层：盖在战斗界面之上 ---- */
+    BattleScreen d;
+    memset(&d, 0, sizeof(d));
+    d.foe_sprite = sprite_get(376, SPR_FRONT);
+    d.me_sprite = sprite_get(6, SPR_FRONT);
+    d.foe_name = "巨金怪";
+    d.me_name = "喷火龙";
+    d.foe_lv = "Lv50";
+    d.me_lv = "Lv50";
+    d.foe_hp_permil = 720;
+    d.me_hp_permil = 990;
+    d.log[0] = "对手 派出了 巨金怪！";
+    for (int i = 0; i < 4; i++) {
+        d.moves[i] = items[0];
+        d.move_pp[i] = "15";
+    }
+    d.selected = 0;
+
+    MenuScreen ovl;
+    memset(&ovl, 0, sizeof(ovl));
+    ovl.title = "选择";
+    ovl.items[0] = "换人";
+    ovl.items[1] = "认输";
+    ovl.count = 2;
+    ovl.rows = 2;
+    ovl.selected = 0;
+    ovl.status_right = "选择   确定   长按返回";
+
+    /* ui_overlay_rect 必须正好是招式菜单的矩形：弹层就是靠「完全盖住它」
+     * 来分层的。这四个数字写死 —— 改了招式版式而忘了改弹层，这里立刻断。 */
+    int rx, ry, rw, rh;
+    ui_overlay_rect(&rx, &ry, &rw, &rh);
+    check(rx == 4 && ry == 220 && rw == 232 && rh == 64,
+          "弹层矩形 = 招式菜单矩形（实测 %d,%d %dx%d）", rx, ry, rw, rh);
+
+    memset(g_fb, 0, sizeof(g_fb));
+    r_init(&s, g_fb, W, H, W);
+    ui_battle_screen(&s, &f, &d);
+    ui_overlay_screen(&s, &f, &ovl);
+
+    /* 金色模态外框：框外 2px 起，左边 x=2 */
+    check(g_fb[250 * W + 2] == RGB565_C(205, 172, 8), "弹层有金色模态外框");
+    /* 框内标题行是白的（y=224 在 12px 标题行的行框里，x=200 无墨迹） */
+    check(g_fb[224 * W + 200] == RGB565_C(255, 255, 255), "弹层标题行是白底");
+    /* 第 1 行选中：y 236 起，高亮 235..257、内缩后 237..255 */
+    check(g_fb[245 * W + 200] == RGB565_C(255, 230, 57), "弹层选中项是黄底");
+    /* 第 2 行白底 */
+    check(g_fb[262 * W + 200] == RGB565_C(255, 255, 255), "弹层未选中项是白底");
+
+    /*
+     * 招式菜单必须被**完全盖住**。招式菜单第 2 列格子的浅蓝描边在
+     * (124..230, 225) —— 弹层画上去之后那里应是弹层自己的内容（标题行的
+     * 白底），不能再看到招式格子的描边色。漏画 ui_overlay_screen 或把
+     * 弹层画小了，这里都会露馅。
+     */
+    check(g_fb[225 * W + 200] != RGB565_C(106, 139, 189),
+          "弹层盖住了招式菜单（那里不再是招式格子的描边色）");
+}
+
 int main(void)
 {
     printf("渲染层自检\n");
@@ -509,6 +678,7 @@ int main(void)
     test_font();
     test_text_draw();
     test_ui_pixels();
+    test_menu_pixels();
 
     printf("\n=== 结果: %d 通过, %d 失败 ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

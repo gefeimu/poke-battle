@@ -94,10 +94,27 @@ const char *log_get(const BattleLog *l, uint16_t i)
 
 /* ---------- 小工具 ---------- */
 
+/*
+ * 日志里出现的宝可梦名。用**中文名**而不是英文名：这些字符串会原样
+ * 显示在对话框里（见 poke_session 的日志播放），写 "Charmander" 就等于
+ * 让中文界面里蹦英文。name_cn 是数据表里的字段，不是在这里拼的。
+ */
 static const char *mon_name(const BattleMon *m)
 {
     const SpeciesDef *sd = species_get(m->active_pid);
-    return sd ? sd->name : "???";
+    return (sd && sd->name_cn) ? sd->name_cn : "???";
+}
+
+/*
+ * 日志里出现的招式名。理由同上：会原样显示在对话框里，用 kMoves[].name
+ * 会变成「我方 使用了 Flamethrower！」。
+ */
+static const char *mv_name(const MoveDef *mv)
+{
+    if (!mv) {
+        return "???";
+    }
+    return mv->name_cn ? mv->name_cn : mv->name;
 }
 
 static const char *atk_side_name(const Battle *b, int is_foe)
@@ -521,12 +538,28 @@ static int do_move(Battle *b, int attacker_is_foe)
     }
 
     if (atk->pp[slot] == 0) {
-        log_add(&b->log, "%s 的 %s 没有 PP 了！", atk_side->name, mv->name);
-        return 0;
+        if (!mon_all_pp_gone(atk)) {
+            /* 还有别的招能用，只是调用方选了一个没 PP 的槽 —— 浪费一个回合，
+             * 与以前一致（正常的界面不会给出这个选项）。 */
+            log_add(&b->log, "%s 的 %s 没有 PP 了！", atk_side->name, mv_name(mv));
+            return 0;
+        }
+        /*
+         * **所有招式的 PP 都用光了 → 挣扎。**
+         * 没有这条规则，四个槽全空之后每一次出招都会被上面那句挡回去，
+         * 回合永远推不动、对局就卡死了（引擎有 300 回合上限，卡住连平局
+         * 都判不出来）。招式表里本来就有 Struggle（id 165），不用另造。
+         */
+        mv = mv_get(STRUGGLE_MOVE_ID);
+        if (!mv) {
+            log_add(&b->log, "%s 什么都做不了", atk_side->name);
+            return 0;
+        }
+    } else {
+        atk->pp[slot]--;
     }
-    atk->pp[slot]--;
 
-    log_add(&b->log, "%s 使用了 %s！", atk_side->name, mv->name);
+    log_add(&b->log, "%s 使用了 %s！", atk_side->name, mv_name(mv));
 
     /* ---- 命中判定 ---- */
     /* accuracy 0 = 必中。命中率受双方命中/闪避等级影响（每级 ±0.33 倍）。 */
@@ -556,7 +589,7 @@ static int do_move(Battle *b, int attacker_is_foe)
     /* ---- 属性免疫（飘浮/储水/蓄电/引火等） ---- */
     if (ability_immune_type(def, def->base.ability, mv->type)) {
         log_add(&b->log, "%s 的 %s 不受 %s 影响！", def_side->name,
-                ability_name(def->base.ability), mv->name);
+                ability_name(def->base.ability), mv_name(mv));
         return 0;
     }
 

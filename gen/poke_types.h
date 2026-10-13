@@ -1,4 +1,4 @@
-/* 由 tools/gen_gen3_data.py 自动生成 */
+/* 自动生成：克制表来自 data/csv/type_efficacy.csv，改数据请改该 CSV（见 tools/type_chart.py） */
 #ifndef POKE_TYPES_H
 #define POKE_TYPES_H
 

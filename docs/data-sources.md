@@ -6,10 +6,16 @@
 | 目录 | 体积 | 为什么要用 | 入库 |
 |---|---|---|---|
 | `data/csv/` | ~12 MB | Veekun 的三代数据表，`tools/gen_gen3_data.py` 的输入 | ❌ |
+| ↳ `data/csv/type_efficacy.csv` | 2.8 KB | **唯一**入库的一个：属性克制表的数据源 | ✅ |
 | `data/fonts/` | 2.6 MB | 得意黑，`tools/gen_lvgl_font.py` 的输入 | ❌ |
 | 精灵图源仓库 | 大 | PokeAPI/sprites，`tools/build_sprites_c.py` 的输入 | ❌ |
 | `gen/*.c` | ~7 MB | 生成产物，固件真正编译的东西 | ✅ |
 | `data/font_chars.txt` | 3.6 KB | 字库字符清单（字体生成的输入） | ✅ |
+
+> **`type_efficacy.csv` 为什么破例入库**：它是属性克制表的唯一数据源，而那张表
+> 历史上是手写的，写错了 14 处还与自己的断言互相印证（详见 `tools/type_chart.py`
+> 开头的账）。它只有 2.8 KB，跟着仓库走才能在全新克隆上照样跑全量校验
+> （`tools/check_consistency.py` 第 15 组）。
 
 ---
 
@@ -33,6 +39,9 @@ PY
 ```
 
 Veekun 的数据是 **CC-BY-SA 3.0**（见上游仓库 `README.md`）。
+
+> 除 `type_efficacy.csv` 外的 CSV 都不入库。要单独重建属性表（只想动克制关系时）
+> 不必克隆整个数据集：`type_efficacy.csv` 已经在仓库里，`make types` 直接能跑。
 
 ## 2. 得意黑 → `data/fonts/`
 
@@ -98,8 +107,9 @@ PokeAPI/sprites 的图源是各代游戏素材，版权归任天堂 / Creatures 
 # 1. 数据表（依赖 data/csv）——含中文名，会顺带更新 tools/zh_names.py 的输出
 python tools/gen_gen3_data.py
 
-# 2. 属性克制表（纯硬编码，不依赖 CSV；改克制关系时才需要单独跑）
-python tools/gen_gen3_data.py        # 已包含，或 make types
+# 2. 属性克制表（数据源 data/csv/type_efficacy.csv 已入库，只动克制关系时单独跑）
+#    只重建 gen/poke_types.{h,c}，不需要另外 35 个 CSV
+make types
 
 # 3. 字库字符清单必须晚于 1：它扫 gen/*.c 的中文名字面量
 python tools/gen_font.py --font C:/Windows/Fonts/Deng.ttf   # 自制 1bpp
