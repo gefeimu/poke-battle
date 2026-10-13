@@ -155,7 +155,7 @@ int main(int argc, char **argv)
     d.selected = 0;
 
     static const char *const st_l = "PP 15/15";
-    static const char *const st_r = "选择招式   换人   逃跑";
+    static const char *const st_r = "选择招式   换人   认输";
     d.status_left = st_l;
     d.status_right = st_r;
 

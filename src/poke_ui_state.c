@@ -66,9 +66,9 @@ const char *ui_item_label(UiScreen sc, int index)
     }
     if (sc == UI_SCREEN_ACTION) {
         switch (index) {
-        case UI_ACTION_SWITCH: return "换人";
-        case UI_ACTION_RUN:    return "逃跑";
-        default:               return NULL;
+        case UI_ACTION_SWITCH:  return "换人";
+        case UI_ACTION_FORFEIT: return "认输";
+        default:                return NULL;
         }
     }
     /* 队伍 / 换人 / 招式 这几行的文字来自数据（种族名、招式名），不在这里写死 */
@@ -378,7 +378,8 @@ bool ui_state_feed(UiState *s, const KeyMsg *msg, uint32_t now_ms, UiResult *out
             push_screen(s, UI_SCREEN_SWITCH, false);
             return false;
         }
-        return emit(out, UI_ACT_RUN, 0);
+        /* 认输不可逆：本层只报「用户想认输」，真的结束对局由调用方决定 */
+        return emit(out, UI_ACT_FORFEIT, 0);
 
     case UI_SCREEN_SWITCH:
         if (f->cursor >= count_of(s, UI_SCREEN_SWITCH)) {

@@ -45,7 +45,7 @@ typedef enum {
     UI_SCREEN_MAIN = 0,  /* 主菜单：开始对战 / 队伍配置 */
     UI_SCREEN_TEAM,      /* 队伍配置：图鉴列表（可滚动） */
     UI_SCREEN_BATTLE,    /* 战斗主界面：招式菜单（2x2，与 hero 图一致） */
-    UI_SCREEN_ACTION,    /* 战斗中弹层：换人 / 逃跑 */
+    UI_SCREEN_ACTION,    /* 战斗中弹层：换人 / 认输 */
     UI_SCREEN_SWITCH,    /* 换人选择 */
     UI_SCREEN_RESULT,    /* 结算 */
     UI_SCREEN_COUNT,
@@ -54,7 +54,7 @@ typedef enum {
 /* 弹层的项。顺序即列表顺序 —— **不要在中间插项**，会改变已存界面的光标含义。 */
 enum {
     UI_ACTION_SWITCH = 0,
-    UI_ACTION_RUN,
+    UI_ACTION_FORFEIT,
     UI_ACTION_COUNT,
 };
 
@@ -77,13 +77,23 @@ typedef enum {
     UI_ACT_PICK_SPECIES,   /* arg = 图鉴序号；队伍编辑尚未实现，先报出来 */
     UI_ACT_CHOOSE_MOVE,    /* arg = **招式槽** 0..3（不是菜单序号） */
     UI_ACT_SWITCH_MON,     /* arg = **队伍槽** 0..5（不是菜单序号） */
-    UI_ACT_RUN,            /* 逃跑 */
+    UI_ACT_FORFEIT,        /* 认输，不是「逃跑」—— 见下方说明 */
 } UiAction;
 
 typedef struct {
     UiAction act;
     int      arg;
 } UiResult;
+
+/*
+ * 为什么是「认输」而不是「逃跑」
+ * -----------------------------
+ * 这场 6v6 是**两个人对局**，不是野外遇敌：对手是另一个玩家，不存在
+ * 「撒腿跑掉」这回事，也没有野生遇敌的逃跑成功率公式。玩家能做的是
+ * 认输 —— 主动判自己这一局输。调用方接到 UI_ACT_FORFEIT 后应当直接把
+ * 结果置为 BATTLE_LOSE（不能走 battle_step：那是「招式结算」不是「弃权」）。
+ * 弹层里的这一项因此是**不可逆**的，将来若要加二次确认，加在这一层。
+ */
 
 /* ---------------------------------------------------------------- 模型 */
 

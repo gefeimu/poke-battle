@@ -125,7 +125,7 @@ int main(int argc, char **argv)
         "吃剩的东西 回复了 16 点 HP！",
         "第 12 回合",
         "HP 187/240  Lv50  攻击 168 防御 145",
-        "选择招式 换人 背包 逃跑 返回",
+        "选择招式 换人 背包 认输 返回",
     };
     const int n_default = (int)(sizeof(defaults) / sizeof(defaults[0]));
 

@@ -344,11 +344,11 @@ static void test_overlay(void)
     check(ui_state_screen(&r.st) == UI_SCREEN_BATTLE, "弹层里长按 → 返回战斗界面");
     check(ui_state_depth(&r.st) == 1, "返回后栈深 %d", ui_state_depth(&r.st));
 
-    /* 弹层第 2 项「逃跑」 */
+    /* 弹层第 2 项「认输」 */
     hold(&r, KEY_OK);
     ev_(&r, KEY_DOWN, KEY_EV_PRESS, NULL);
     got = tap(&r, KEY_OK, &out);
-    check(got && out.act == UI_ACT_RUN, "弹层第 2 项 → 逃跑（%s）", action_name(out.act));
+    check(got && out.act == UI_ACT_FORFEIT, "弹层第 2 项 → 认输（%s）", action_name(out.act));
 
     /* 队伍配置里长按也是返回 */
     Rig r2;
@@ -472,8 +472,8 @@ static void test_texts(void)
           "主菜单第 2 项 = 队伍配置");
     check(strcmp(ui_item_label(UI_SCREEN_ACTION, UI_ACTION_SWITCH), "换人") == 0,
           "弹层第 1 项 = 换人");
-    check(strcmp(ui_item_label(UI_SCREEN_ACTION, UI_ACTION_RUN), "逃跑") == 0,
-          "弹层第 2 项 = 逃跑");
+    check(strcmp(ui_item_label(UI_SCREEN_ACTION, UI_ACTION_FORFEIT), "认输") == 0,
+          "弹层第 2 项 = 认输");
     check(ui_item_label(UI_SCREEN_TEAM, 0) == NULL,
           "列表类界面的行文字来自数据，不在这里写死");
     check(ui_item_label(UI_SCREEN_MAIN, 99) == NULL, "越界取标签返回 NULL");
@@ -627,7 +627,7 @@ const char *action_name(UiAction a)
     case UI_ACT_PICK_SPECIES:  return "选图鉴";
     case UI_ACT_CHOOSE_MOVE:   return "出招";
     case UI_ACT_SWITCH_MON:    return "换人";
-    case UI_ACT_RUN:           return "逃跑";
+    case UI_ACT_FORFEIT:       return "认输";
     default:                   return "?";
     }
 }
