@@ -336,6 +336,7 @@ poke-battle/
 │
 ├── Makefile                   统一构建入口（make test / bench / sprites-preview）
 ├── LICENSE                    MIT（只覆盖本项目代码）
+├── THIRD-PARTY-NOTICES.md     第三方素材的条款（不受 MIT 覆盖）
 └── README.md
 ```
 ---
@@ -893,7 +894,9 @@ opencc / zhconv 之类的依赖：本项目要能在一台裸 Windows 上重建�
 全文见 [LICENSE](LICENSE)。
 
 > **MIT 只覆盖代码本身。** 仓库里还包含第三方内容的衍生物（精灵图、字库位图），
-> 它们**不受 MIT 覆盖**，另有各自的条款，见下节。分发本项目时请把这一点一并说明。
+> 它们**不受 MIT 覆盖**，另有各自的条款——已单列在
+> [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)（没有塞进 `LICENSE`
+> 末尾，否则 GitHub 会把仓库判成 "Other" 而不是 MIT）。
 
 ### 第三方资源
 

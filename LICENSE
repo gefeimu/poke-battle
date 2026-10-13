@@ -19,19 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-上述 MIT 许可只覆盖本项目自己的代码（src/、test/、tools/、Makefile 等）。
-
-仓库内还包含第三方内容的衍生物，它们不受 MIT 覆盖，另有各自的条款：
-
-  gen/poke_sprites.c    精灵图，游戏素材，版权归任天堂 / Creatures / GAME FREAK
-                        来源见 docs/data-sources.md
-  gen/font_app_16.c     得意黑（Smiley Sans）裁出的字形位图，SIL OFL 1.1
-                        许可全文见 docs/third-party/SmileySans-OFL.txt
-  gen/font_cn.c         等线（Windows 系统字体）裁出的点阵，仅供本机自用
-                        若要公开发布请换成 OFL 字体重新生成
-
-宝可梦（Pokémon）是任天堂 / Creatures / GAME FREAK 的注册商标，相关名称、
-形象与招式设计的权利归其各自所有者。
