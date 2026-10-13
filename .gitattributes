@@ -1,0 +1,29 @@
+# 统一换行：仓库内存 LF，检出时按平台（Windows 上会转 CRLF）
+#
+# 不加这一条，Windows 的 core.autocrlf=true 会让 Git 在每次 add 时
+# 报一堆 "LF will be replaced by CRLF"，并且不同机器提交的同一个文件
+# 可能带不同换行，产生无意义的整文件 diff。
+* text=auto eol=lf
+
+# 二进制文件不要做任何换行/文本转换
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.ttf  binary
+*.otf  binary
+*.woff2 binary
+*.zip  binary
+*.pgm  binary
+*.exe  binary
+
+# 生成产物在 diff 里没有可读性（单行几万个十六进制字节），
+# 直接当二进制，避免 GitHub 上把整个文件标成一行改动。
+gen/poke_sprites.c linguist-generated=true -diff
+gen/font_app_16.c  linguist-generated=true -diff
+gen/font_cn.c      linguist-generated=true -diff
+gen/poke_moves.c   linguist-generated=true -diff
+gen/poke_learnsets.c linguist-generated=true -diff
+gen/poke_items.c   linguist-generated=true -diff
+gen/poke_species.c linguist-generated=true -diff
