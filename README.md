@@ -22,6 +22,7 @@
 | 测试 | **324 项断言全过，零编译警告**（`make test`，约 30 秒） |
 | AI 强度 | 200 局 6v6 对随机手 **70%**，同批种子随机基线 52% |
 | 进度 | 数据层 + 规则层 + AI 完成；**UI / 渲染层未开始** |
+| 许可 | MIT（仅覆盖本项目代码；精灵图与字库是第三方衍生物，见[许可](#许可)） |
 
 ```bash
 git clone https://github.com/gefeimu/poke-battle.git && cd poke-battle
@@ -34,7 +35,7 @@ make sprites-preview # 把固件里的精灵图导成 PNG 看画质
 [数据来源与重建方法](docs/data-sources.md)）。
 
 > 自用学习项目。宝可梦相关设计版权归任天堂 / Creatures / GAME FREAK 所有。
-> 第三方数据与字体的出处、许可见[第三方资源与许可](#第三方资源与许可)。
+> 代码采用 [MIT 许可](#许可)；第三方数据与字体不受 MIT 覆盖，见[许可](#许可)。
 
 ---
 
@@ -334,6 +335,7 @@ poke-battle/
 │   └── bench_step.c           引擎单步耗时基准
 │
 ├── Makefile                   统一构建入口（make test / bench / sprites-preview）
+├── LICENSE                    MIT（只覆盖本项目代码）
 └── README.md
 ```
 ---
@@ -880,11 +882,20 @@ opencc / zhconv 之类的依赖：本项目要能在一台裸 Windows 上重建�
   （如 Noto Sans SC）对比。
 - **字对血条框偏大、1bpp 字库缺半角 ASCII**：见[界面设计](#界面设计待实现)里
   「两个字体相关的真实缺口」。这两条会直接影响战斗界面的实现方式，建议早定。
-- **代码许可证未定**：尚未声明，需要时再补。
 
 ---
 
-## 第三方资源与许可
+## 许可
+
+### 本项目代码：MIT
+
+`src/`、`test/`、`tools/`、`Makefile` 等本项目自己写的代码采用 **MIT**，
+全文见 [LICENSE](LICENSE)。
+
+> **MIT 只覆盖代码本身。** 仓库里还包含第三方内容的衍生物（精灵图、字库位图），
+> 它们**不受 MIT 覆盖**，另有各自的条款，见下节。分发本项目时请把这一点一并说明。
+
+### 第三方资源
 
 本项目**不包含**任何原版游戏素材，数据与字体均来自公开数据集。重建方法见
 [docs/data-sources.md](docs/data-sources.md)。
