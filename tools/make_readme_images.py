@@ -50,7 +50,7 @@ HB_EDGE = (65, 65, 65)        # healthbox.pal[1] 边框
 HB_INNER = (222, 213, 180)    # healthbox.pal[3] 内斜角
 HB_TEXT = (32, 57, 0)         # healthbox.pal[7] 框内文字（深绿）
 HB_SHADOW = (82, 106, 98)     # healthbox.pal[6] 右下投影（墨绿）
-HB_EXP = (65, 205, 255)       # healthbox.pal[11] EXP 条（青）
+# healthbox.pal[11] 是原版 EXP 条的青色，本项目不用 EXP 条，故不定义
 
 # HP 条（双色立体：上行高光 + 下行基色）
 BAR_TRACK = (57, 57, 57)
@@ -229,18 +229,28 @@ def hp_bar(d, x, y, w, h, ratio):
     """
     画 FRLG 风格的 HP 条。
 
-    原版是**双色立体**：上行高光、下行基色，外面套一圈深色槽。
-    直接用单色矩形会显得很平，和原版差得远。
+    两个要点：
+      1. **双色立体**——原版不是单色矩形，而是上行高光、下行基色，外面套深色槽。
+         按单色画会明显「不像」。
+      2. **四角圆角**——两端收成胶囊形，与血条框的圆角风格统一。
+         原版是方角，这里按需求改成圆角。
     """
-    d.rectangle([x, y, x + w - 1, y + h - 1], fill=BAR_TRACK)
+    r = max(1, h // 2)
+    d.rounded_rectangle([x, y, x + w - 1, y + h - 1], radius=r, fill=BAR_TRACK)
+
     inner_w = w - 2
     fill_w = max(0, min(inner_w, int(round(inner_w * ratio))))
-    if fill_w <= 0:
+    if fill_w < 3:
         return
+
     hi, lo = hp_color(ratio)
-    top = h // 2 - 1 if h >= 4 else 1
-    d.rectangle([x + 1, y + 1, x + fill_w, y + 1 + top - 1], fill=hi)
-    d.rectangle([x + 1, y + 1 + top, x + fill_w, y + h - 2], fill=lo)
+    x1, y1 = x + 1, y + 1
+    x2, y2 = x + fill_w, y + h - 2
+    r2 = max(1, (h - 2) // 2)
+    d.rounded_rectangle([x1, y1, x2, y2], radius=r2, fill=lo)
+    # 上缘高光：两端各收进 2px，避免方角从胶囊形的圆弧里戳出来
+    if fill_w > 5:
+        d.rectangle([x1 + 2, y1, x2 - 2, y1 + max(0, h // 3 - 1)], fill=hi)
 
 
 def frlg_frame(d, x, y, w, h, radius=5):
@@ -251,39 +261,41 @@ def frlg_frame(d, x, y, w, h, radius=5):
                         radius=radius, fill=HB_FILL, outline=HB_EDGE, width=2)
 
 
-def healthbox(font, img, d, x, y, w, h, name, lv, ratio,
-              hp_text=None, exp=None):
+HP_BAR_H = 5        # 条高（原版约 8，按需求调到 5）
+
+
+def healthbox(font, img, d, x, y, w, h, name, lv, ratio, hp_text=None):
     """
-    一个完整的血条框。
+    一个完整的血条框。`font` 传 12px 那套（16px 在小框里明显偏大）。
 
     对手框 128x32：名字 + Lv + HP 条（原版对手框不显示数字）
-    我方框 128x64：多「HP」标签、一行 HP 数字和一条 EXP 条
+    我方框 128x48：多「HP」标签和一行 HP 数字
 
-    原版我方框的第 2 行是「HP」+ 条，第 3 行数字右对齐，第 4 行 EXP 条。
+    **我方框高度与原版不同**：原版的 128x64 是因为最下面压着一条 EXP 条，
+    本项目不用 EXP，所以压到 48——三行（名字 / HP 条 / 数字）正好填满，
+    不然下方会留一块空白。
     """
     frlg_frame(d, x, y, w, h)
-    font.draw(img, x + 8, y + 2, name, HB_TEXT)        # 名字
-    lv_x = x + w - 8 - font.measure(lv)
-    font.draw(img, lv_x, y + 2, lv, HB_TEXT)           # 等级右对齐
 
     if hp_text:
-        # 我方框：左边标「HP」，条相应缩短，数字右对齐到框内右侧
-        font.draw(img, x + 8, y + 20, "HP", HB_TEXT)
-        bar_x = x + 30
-        bar_w = w - 30 - 8
+        name_y, bar_y, num_y = 3, 20, 31
+    else:
+        name_y, bar_y, num_y = 3, 20, 0
+    font.draw(img, x + 8, y + name_y, name, HB_TEXT)          # 名字
+    lv_x = x + w - 8 - font.measure(lv)
+    font.draw(img, lv_x, y + name_y, lv, HB_TEXT)             # 等级右对齐
+
+    if hp_text:
+        # 我方框：左边标「HP」，条相应缩短；标签与条垂直居中对齐
+        font.draw(img, x + 8, y + bar_y - 5, "HP", HB_TEXT)
+        bar_x = x + 8 + font.measure("HP") + 5
     else:
         bar_x = x + 8
-        bar_w = w - 16
-    hp_bar(d, bar_x, y + 22, bar_w, 8, ratio)
+    hp_bar(d, bar_x, y + bar_y, (x + w - 8) - bar_x, HP_BAR_H, ratio)
 
     if hp_text:
-        font.draw(img, x + w - 8 - font.measure(hp_text), y + 30,
+        font.draw(img, x + w - 8 - font.measure(hp_text), y + num_y,
                   hp_text, HB_TEXT)
-    if exp is not None:
-        d.rectangle([x + 8, y + 55, x + w - 9, y + 58], fill=BAR_TRACK)
-        ew = int((w - 18) * exp)
-        if ew > 0:
-            d.rectangle([x + 9, y + 56, x + 8 + ew, y + 57], fill=HB_EXP)
 
 
 def dialog(d, x, y, w, h, radius=6):
@@ -320,7 +332,7 @@ def check_charset(font, strings, label):
 
 # ---------------------------------------------------------------- 三个图
 
-def make_hero(f_lvgl, sprites, names, scale):
+def make_hero(f_ui, f_lvgl, sprites, names, scale):
     """
     240x320 战斗界面，**按三代（火红/叶绿）原版版式重画**。
 
@@ -329,7 +341,7 @@ def make_hero(f_lvgl, sprites, names, scale):
     | 项 | 值 | 出处 |
     |---|---|---|
     | 对手血条框 | 128x32，左上角贴边 (0,0) | OAM `SPRITE_SHAPE(64x64)` x2 精灵拼合 |
-    | 我方血条框 | 128x64，右下角贴边 (112,88) | 同上，多一行 HP 数字 + EXP 条 |
+    | 我方血条框 | 128x48，右下角贴边 (112,104) | 原版为 128x64，本项目去掉 EXP 条后压到 48 |
     | 网格 | 左上 / 右下**对角**摆放 | 原版就是对角，两框各占半屏宽 |
     | 框体配色 | 米白填充 + 深灰描边 + 右下墨绿投影 | `healthbox.pal` |
     | HP 条 | 双色立体（上行高光、下行基色）+ 深色槽 | `healthbar.pal` |
@@ -361,29 +373,38 @@ def make_hero(f_lvgl, sprites, names, scale):
                fill=tuple(int(a + (b - a) * t)
                           for a, b in zip(GROUND, GROUND_DARK)))
 
-    # ---- 立绘平台（画在立绘与血条框之前，下缘会被盖住）----
-    d.ellipse([136, 74, 220, 98], fill=PLATFORM_DARK)
-    d.ellipse([138, 72, 218, 94], fill=PLATFORM)
-    d.ellipse([2, 122, 90, 148], fill=PLATFORM_DARK)
-    d.ellipse([4, 120, 88, 144], fill=PLATFORM)
-
-    # ---- 立绘 ----
-    # 对手：右上。底边 y=86 必须**高于我方血条框顶边 y=88**，
+    # ---- 立绘与站台 ----
+    # 对手：右上。64x64 画布的下边界在 y=86，必须**高于我方血条框顶边 y=88**，
     # 否则下半身会被血条框盖住（第一版踩过）。
     foe = sprites[("metagross", "front")]
-    img.paste(foe, (146, 22), foe)
-    # 我方：中左
     me = sprites[("charizard", "front")]
-    img.paste(me, (10, 70), me)
+    FOE_XY, ME_XY = (146, 22), (10, 70)
+
+    # 站台要按**可见像素**的下边界摆，不能按 64x64 画布的下边界：
+    # 立绘画布底部通常留一圈空白（巨金怪留了 6px），按画布摆会让站台
+    # 明显悬在脚底下。这是实际看预览图之后才发现的。
+    foe_feet = FOE_XY[1] + foe.getbbox()[3]
+    me_feet = ME_XY[1] + me.getbbox()[3]
+
+    def platform(cx, feet_y, rx, ry):
+        d.ellipse([cx - rx, feet_y - ry + 2, cx + rx, feet_y + ry + 2],
+                  fill=PLATFORM_DARK)
+        d.ellipse([cx - rx + 3, feet_y - ry, cx + rx - 3, feet_y + ry],
+                  fill=PLATFORM)
+
+    platform(178, foe_feet, 40, 9)
+    platform(42, me_feet, 44, 10)
+
+    img.paste(foe, FOE_XY, foe)
+    img.paste(me, ME_XY, me)
 
     # ---- 两个血条框：对角贴边，尺寸照原版 ----
     # 对手：左上，128x32
-    healthbox(f_lvgl, img, d, 0, 0, 128, 32,
+    healthbox(f_ui, img, d, 0, 0, 128, 32,
               names["metagross"], "Lv50", 0.72)
     # 我方：右下，128x64（多 HP 数字与 EXP 条）
-    healthbox(f_lvgl, img, d, 112, 88, 128, 64,
-              names["charizard"], "Lv50", 0.44,
-              hp_text="68/153", exp=0.35)
+    healthbox(f_ui, img, d, 112, 104, 128, 48,
+              names["charizard"], "Lv50", 0.44, hp_text="68/153")
 
     # ---- 下半屏：对话框 + 招式菜单 + 状态行 ----
     # 日志框
@@ -507,9 +528,11 @@ def main():
     out = ROOT / args.out
     out.mkdir(parents=True, exist_ok=True)
 
-    f_lvgl = LVGLFont(ROOT / "gen/font_app_16.c", bpp=4)
-    print(f"LVGL 字体：字形 {len(f_lvgl.glyphs)}，"
-          f"line_height={f_lvgl.line_height} base_line={f_lvgl.base_line}")
+    f_lvgl = LVGLFont(ROOT / "gen/font_app_16.c", bpp=4)   # 对话框用
+    f_ui = LVGLFont(ROOT / "gen/font_app_12.c", bpp=4)     # 血条框用（小一号）
+    for nm, f in (("16px", f_lvgl), ("12px", f_ui)):
+        print(f"LVGL {nm} 字体：字形 {len(f.glyphs)}，"
+              f"line_height={f.line_height}")
 
     names_cn = load_species_names(ROOT / "gen/poke_species.c")
     # 英文标识符 -> 中文名
@@ -523,14 +546,19 @@ def main():
     # 日志文案必须与 src/poke_battle.c 的 log_add 原文一致；UI 用词必须
     # 出自 tools/gen_font.py 的 UI_STRINGS。写错一个字就硬失败。
     hero_strings = [
-        "巨金怪", "喷火龙", "Lv50", "HP 68/153",
+        "巨金怪", "喷火龙", "Lv50", "HP", "68/153",
         "喷火龙 使用了 喷射火焰！", "会心一击！造成了 187 点伤害",
         "喷射火焰", "龙爪", "翅膀攻击", "剑舞",
         "15/15", "35/35", "20/20",
         "选择招式   换人   逃跑   返回",
     ]
-    n = check_charset(f_lvgl, hero_strings, "hero.png")
-    print(f"hero 文案用字 {n} 个，字库全部覆盖")
+    # 血条框那句用 12px 那套校验，对话框用 16px，各自独立
+    box_strings = [s for s in hero_strings
+                   if s in ("巨金怪", "喷火龙", "Lv50", "68/153", "HP")]
+    n_box = check_charset(f_ui, box_strings, "hero.png 血条框（12px）")
+    n_dlg = check_charset(f_lvgl, [s for s in hero_strings if s not in box_strings],
+                          "hero.png 对话框（16px）")
+    print(f"hero 文案：血条框 {n_box} 字 + 对话框 {n_dlg} 字，两套字库各自全覆盖")
 
     sprite_src = (ROOT / "gen/poke_sprites.c").read_text(
         encoding="utf-8", errors="replace")
@@ -554,7 +582,7 @@ def main():
     print(f"已解出 {len(sprites)} 张精灵图")
 
     if task in ("all", "hero"):
-        hero = make_hero(f_lvgl, sprites, en2cn, args.scale)
+        hero = make_hero(f_ui, f_lvgl, sprites, en2cn, args.scale)
         hero.save(out / "hero.png")
         print(f"hero.png          {hero.width}x{hero.height}")
 
