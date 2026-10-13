@@ -344,11 +344,18 @@ static void test_overlay(void)
     check(ui_state_screen(&r.st) == UI_SCREEN_BATTLE, "弹层里长按 → 返回战斗界面");
     check(ui_state_depth(&r.st) == 1, "返回后栈深 %d", ui_state_depth(&r.st));
 
-    /* 弹层第 2 项「认输」 */
+    /* 弹层第 2 项「认输」—— 只进确认界面，**不产生动作** */
     hold(&r, KEY_OK);
     ev_(&r, KEY_DOWN, KEY_EV_PRESS, NULL);
+    int before = r.nactions;
     got = tap(&r, KEY_OK, &out);
-    check(got && out.act == UI_ACT_FORFEIT, "弹层第 2 项 → 认输（%s）", action_name(out.act));
+    check(!got && r.nactions == before
+          && ui_state_screen(&r.st) == UI_SCREEN_CONFIRM,
+          "弹层第 2 项 → 进确认界面、不产生动作（%s）",
+          screen_name(ui_state_screen(&r.st)));
+    check(ui_state_depth(&r.st) == 3,
+          "确认界面压在弹层之上（栈深 %d；此处战斗界面就是栈底，刚换过人重置过）",
+          ui_state_depth(&r.st));
 
     /* 队伍配置里长按也是返回 */
     Rig r2;
@@ -359,6 +366,83 @@ static void test_overlay(void)
     hold(&r2, KEY_OK);
     check(ui_state_screen(&r2.st) == UI_SCREEN_MAIN && ui_state_depth(&r2.st) == 1,
           "队伍配置里长按 → 回主菜单（%s）", screen_name(ui_state_screen(&r2.st)));
+}
+
+static void test_forfeit_confirm(void)
+{
+    printf("\n[认输确认] 不可逆的操作要两次刻意操作才生效\n");
+    Rig r;
+    rig_init(&r);
+    UiModel m = model_sample();
+    ui_state_set_model(&r.st, &m);
+    tap(&r, KEY_OK, NULL);                       /* 开始对战（动作 1） */
+    hold(&r, KEY_OK);                            /* 打开弹层 */
+    check(ui_state_screen(&r.st) == UI_SCREEN_ACTION, "先到弹层");
+
+    /* 弹层默认光标在「换人」上，移到第 2 项「认输」 */
+    ev_(&r, KEY_DOWN, KEY_EV_PRESS, NULL);
+    int before = r.nactions;
+    UiResult out;
+    bool got = tap(&r, KEY_OK, &out);
+    check(!got && r.nactions == before
+          && ui_state_screen(&r.st) == UI_SCREEN_CONFIRM,
+          "选「认输」→ 进确认界面（%s）", screen_name(ui_state_screen(&r.st)));
+    check(ui_state_cursor(&r.st) == UI_CONFIRM_CANCEL,
+          "默认光标停在「取消」（第 %d 项）—— 误按一次不该判负",
+          ui_state_cursor(&r.st));
+    check(ui_state_count(&r.st) == UI_CONFIRM_COUNT, "确认界面 %d 项",
+          ui_state_count(&r.st));
+    check(ui_state_depth(&r.st) == 4, "栈深 %d（主菜单→战斗→弹层→确认）",
+          ui_state_depth(&r.st));
+
+    /* 光标在「取消」上确定 → 回弹层，什么都不发生 */
+    got = tap(&r, KEY_OK, &out);
+    check(!got && r.nactions == before && ui_state_screen(&r.st) == UI_SCREEN_ACTION,
+          "「取消」→ 回弹层、不产生动作（%s）", screen_name(ui_state_screen(&r.st)));
+    check(ui_state_depth(&r.st) == 3, "退回一层（栈深 %d）", ui_state_depth(&r.st));
+    check(ui_state_cursor(&r.st) == UI_ACTION_FORFEIT,
+          "弹层的光标还停在第 %d 项「认输」", ui_state_cursor(&r.st));
+
+    /* 再进一次，这次选「认输」—— 才真的吐动作 */
+    got = tap(&r, KEY_OK, &out);
+    check(!got && ui_state_screen(&r.st) == UI_SCREEN_CONFIRM, "再次进确认界面");
+    ev_(&r, KEY_DOWN, KEY_EV_PRESS, NULL);
+    check(ui_state_cursor(&r.st) == UI_CONFIRM_YES, "移到第 %d 项「认输」",
+          ui_state_cursor(&r.st));
+    got = tap(&r, KEY_OK, &out);
+    check(got && out.act == UI_ACT_FORFEIT, "确认认输 → 吐 UI_ACT_FORFEIT（%s）",
+          action_name(out.act));
+    check(r.nactions == before + 1, "全程只多出这一个动作（动作数 %d）", r.nactions);
+    check(ui_state_screen(&r.st) == UI_SCREEN_CONFIRM,
+          "吐完动作界面不动 —— 结束对局由调用方做（置 BATTLE_LOSE 后 show_result）");
+
+    /* 确认界面长按 = 返回上一层，是弹层不是战斗界面 */
+    hold(&r, KEY_OK);
+    check(ui_state_screen(&r.st) == UI_SCREEN_ACTION && ui_state_depth(&r.st) == 3,
+          "确认界面长按 → 回弹层（栈深 %d）", ui_state_depth(&r.st));
+    hold(&r, KEY_OK);
+    check(ui_state_screen(&r.st) == UI_SCREEN_BATTLE && ui_state_depth(&r.st) == 2,
+          "再长按 → 回战斗界面（栈深 %d，主菜单还压在下面）", ui_state_depth(&r.st));
+
+    /* 确认界面里不存在「没有退路」的情况：它不是强制界面 */
+    check(!ui_state_forced(&r.st), "战斗界面不是强制态");
+
+    /* 反复进出确认界面不会让栈溢出 */
+    Rig r2;
+    rig_init(&r2);
+    tap(&r2, KEY_OK, NULL);
+    for (int i = 0; i < 4; i++) {
+        hold(&r2, KEY_OK);                       /* 打开弹层 */
+        ev_(&r2, KEY_DOWN, KEY_EV_PRESS, NULL);  /* 移到「认输」 */
+        tap(&r2, KEY_OK, NULL);                  /* 进确认界面 */
+        hold(&r2, KEY_OK);                       /* 退出确认界面 */
+        hold(&r2, KEY_OK);                       /* 退出弹层 */
+    }
+    check(ui_state_screen(&r2.st) == UI_SCREEN_BATTLE
+          && ui_state_depth(&r2.st) <= UI_STACK_MAX,
+          "来回进出 4 轮不会让栈溢出（栈深 %d）", ui_state_depth(&r2.st));
+    check(r2.nactions == 1, "这 4 轮里只产生过「开始对战」一个动作（动作数 %d）",
+          r2.nactions);
 }
 
 static void test_forced_switch(void)
@@ -474,9 +558,17 @@ static void test_texts(void)
           "弹层第 1 项 = 换人");
     check(strcmp(ui_item_label(UI_SCREEN_ACTION, UI_ACTION_FORFEIT), "认输") == 0,
           "弹层第 2 项 = 认输");
+    check(strcmp(ui_screen_title(UI_SCREEN_CONFIRM), "确定认输") == 0,
+          "确认界面标题 = 确定认输");
+    check(strcmp(ui_item_label(UI_SCREEN_CONFIRM, UI_CONFIRM_CANCEL), "取消") == 0,
+          "确认界面第 1 项 = 取消（安全的那项排在前）");
+    check(strcmp(ui_item_label(UI_SCREEN_CONFIRM, UI_CONFIRM_YES), "认输") == 0,
+          "确认界面第 2 项 = 认输");
+    check(ui_item_label(UI_SCREEN_CONFIRM, 99) == NULL, "确认界面越界取标签返回 NULL");
     check(ui_item_label(UI_SCREEN_TEAM, 0) == NULL,
           "列表类界面的行文字来自数据，不在这里写死");
     check(ui_item_label(UI_SCREEN_MAIN, 99) == NULL, "越界取标签返回 NULL");
+    check(ui_screen_rows(UI_SCREEN_CONFIRM) == 2, "确认界面一屏 2 行");
     check(ui_screen_rows(UI_SCREEN_TEAM) == 8, "队伍列表一屏 8 行");
     check(ui_screen_rows(UI_SCREEN_BATTLE) == 2, "招式菜单是 2x2，占两行");
     check(ui_screen_rows(UI_SCREEN_SWITCH) == 6, "换人列表一屏 6 行");
@@ -530,7 +622,7 @@ static void test_defensive(void)
 
 static void test_trace(void)
 {
-    printf("\n[序列回放] 主菜单 → 战斗 → 弹层 → 换人 → 长按退出\n");
+    printf("\n[序列回放] 主菜单 → 战斗 → 弹层 → 换人 / 认输确认 → 长按退出\n");
     printf("  （这条轨迹也是本层的用法示例：每 16 ms 喂一次事件、tick 一次）\n");
 
     Rig r;
@@ -557,6 +649,20 @@ static void test_trace(void)
         { KEY_OK,   KEY_EV_RELEASE, "OK 抬起" },
         { KEY_OK,   KEY_EV_PRESS,   "OK 按下" },
         { KEY_OK,   KEY_EV_LONG,    "OK 长按 → 打开弹层" },
+        { KEY_OK,   KEY_EV_RELEASE, "OK 抬起" },
+        { KEY_OK,   KEY_EV_PRESS,   "OK 按下" },
+        { KEY_OK,   KEY_EV_LONG,    "OK 长按 → 返回战斗界面" },
+        { KEY_OK,   KEY_EV_RELEASE, "OK 抬起" },
+        /* 认输这条路：弹层 → 确认界面 → 退出。全程不产生动作。 */
+        { KEY_OK,   KEY_EV_PRESS,   "OK 按下" },
+        { KEY_OK,   KEY_EV_LONG,    "OK 长按 → 打开弹层" },
+        { KEY_OK,   KEY_EV_RELEASE, "OK 抬起" },
+        { KEY_DOWN, KEY_EV_PRESS,   "▲▼ 移到「认输」" },
+        { KEY_OK,   KEY_EV_PRESS,   "OK 按下" },
+        { KEY_OK,   KEY_EV_CLICK,   "OK 轻点 → 进认输确认（还不算判负）" },
+        { KEY_OK,   KEY_EV_RELEASE, "OK 抬起" },
+        { KEY_OK,   KEY_EV_PRESS,   "OK 按下" },
+        { KEY_OK,   KEY_EV_LONG,    "OK 长按 → 退出确认界面" },
         { KEY_OK,   KEY_EV_RELEASE, "OK 抬起" },
         { KEY_OK,   KEY_EV_PRESS,   "OK 按下" },
         { KEY_OK,   KEY_EV_LONG,    "OK 长按 → 返回战斗界面" },
@@ -593,6 +699,7 @@ int main(void)
     test_team_scroll();
     test_battle_moves();
     test_overlay();
+    test_forfeit_confirm();
     test_forced_switch();
     test_result();
     test_swallow_click();
@@ -609,13 +716,14 @@ int main(void)
 const char *screen_name(UiScreen sc)
 {
     switch (sc) {
-    case UI_SCREEN_MAIN:   return "主菜单";
-    case UI_SCREEN_TEAM:   return "队伍配置";
-    case UI_SCREEN_BATTLE: return "战斗界面";
-    case UI_SCREEN_ACTION: return "弹层";
-    case UI_SCREEN_SWITCH: return "换人";
-    case UI_SCREEN_RESULT: return "结算";
-    default:               return "?";
+    case UI_SCREEN_MAIN:    return "主菜单";
+    case UI_SCREEN_TEAM:    return "队伍配置";
+    case UI_SCREEN_BATTLE:  return "战斗界面";
+    case UI_SCREEN_ACTION:  return "弹层";
+    case UI_SCREEN_CONFIRM: return "认输确认";
+    case UI_SCREEN_SWITCH:  return "换人";
+    case UI_SCREEN_RESULT:  return "结算";
+    default:                return "?";
     }
 }
 

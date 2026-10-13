@@ -10,13 +10,14 @@
 int ui_screen_rows(UiScreen sc)
 {
     switch (sc) {
-    case UI_SCREEN_MAIN:   return 2;
-    case UI_SCREEN_TEAM:   return 8;   /* 图鉴列表一屏 8 行 */
-    case UI_SCREEN_BATTLE: return 2;   /* 招式菜单是 2x2，占两行 */
-    case UI_SCREEN_ACTION: return 2;
-    case UI_SCREEN_SWITCH: return 6;   /* 队伍最多 6 只 */
-    case UI_SCREEN_RESULT: return 1;
-    default:               return 1;
+    case UI_SCREEN_MAIN:    return 2;
+    case UI_SCREEN_TEAM:    return 8;   /* 图鉴列表一屏 8 行 */
+    case UI_SCREEN_BATTLE:  return 2;   /* 招式菜单是 2x2，占两行 */
+    case UI_SCREEN_ACTION:  return 2;
+    case UI_SCREEN_CONFIRM: return 2;
+    case UI_SCREEN_SWITCH:  return 6;   /* 队伍最多 6 只 */
+    case UI_SCREEN_RESULT:  return 1;
+    default:                return 1;
     }
 }
 
@@ -29,14 +30,15 @@ int ui_screen_rows(UiScreen sc)
 static int count_of(const UiState *s, UiScreen sc)
 {
     switch (sc) {
-    case UI_SCREEN_MAIN:   return UI_MAIN_COUNT;
+    case UI_SCREEN_MAIN:    return UI_MAIN_COUNT;
     case UI_SCREEN_TEAM:
         return s->model.species_count > 0 ? s->model.species_count : UI_TEAM_COUNT;
-    case UI_SCREEN_BATTLE: return s->model.move_count;
-    case UI_SCREEN_ACTION: return UI_ACTION_COUNT;
-    case UI_SCREEN_SWITCH: return s->model.switch_count;
-    case UI_SCREEN_RESULT: return 1;
-    default:               return 1;
+    case UI_SCREEN_BATTLE:  return s->model.move_count;
+    case UI_SCREEN_ACTION:  return UI_ACTION_COUNT;
+    case UI_SCREEN_CONFIRM: return UI_CONFIRM_COUNT;
+    case UI_SCREEN_SWITCH:  return s->model.switch_count;
+    case UI_SCREEN_RESULT:  return 1;
+    default:                return 1;
     }
 }
 
@@ -45,13 +47,14 @@ static int count_of(const UiState *s, UiScreen sc)
 const char *ui_screen_title(UiScreen sc)
 {
     switch (sc) {
-    case UI_SCREEN_MAIN:   return "主菜单";
-    case UI_SCREEN_TEAM:   return "队伍配置";
-    case UI_SCREEN_BATTLE: return "招式";
-    case UI_SCREEN_ACTION: return "选择";
-    case UI_SCREEN_SWITCH: return "换人";
-    case UI_SCREEN_RESULT: return "结果";
-    default:               return "";
+    case UI_SCREEN_MAIN:    return "主菜单";
+    case UI_SCREEN_TEAM:    return "队伍配置";
+    case UI_SCREEN_BATTLE:  return "招式";
+    case UI_SCREEN_ACTION:  return "选择";
+    case UI_SCREEN_CONFIRM: return "确定认输";
+    case UI_SCREEN_SWITCH:  return "换人";
+    case UI_SCREEN_RESULT:  return "结果";
+    default:                return "";
     }
 }
 
@@ -71,6 +74,13 @@ const char *ui_item_label(UiScreen sc, int index)
         default:                return NULL;
         }
     }
+    if (sc == UI_SCREEN_CONFIRM) {
+        switch (index) {
+        case UI_CONFIRM_CANCEL: return "取消";
+        case UI_CONFIRM_YES:    return "认输";
+        default:                return NULL;
+        }
+    }
     /* 队伍 / 换人 / 招式 这几行的文字来自数据（种族名、招式名），不在这里写死 */
     return NULL;
 }
@@ -78,13 +88,14 @@ const char *ui_item_label(UiScreen sc, int index)
 const char *ui_screen_hint(UiScreen sc)
 {
     switch (sc) {
-    case UI_SCREEN_MAIN:   return "选择   确定";
-    case UI_SCREEN_TEAM:   return "滚动   确定   长按返回";
-    case UI_SCREEN_BATTLE: return "选择招式   长按换人";
-    case UI_SCREEN_ACTION: return "选择   确定   长按返回";
-    case UI_SCREEN_SWITCH: return "选择   确定   长按返回";
-    case UI_SCREEN_RESULT: return "确定继续";
-    default:               return "";
+    case UI_SCREEN_MAIN:    return "选择   确定";
+    case UI_SCREEN_TEAM:    return "滚动   确定   长按返回";
+    case UI_SCREEN_BATTLE:  return "选择招式   长按换人";
+    case UI_SCREEN_ACTION:  return "选择   确定   长按返回";
+    case UI_SCREEN_CONFIRM: return "选择   确定   长按返回";
+    case UI_SCREEN_SWITCH:  return "选择   确定   长按返回";
+    case UI_SCREEN_RESULT:  return "确定继续";
+    default:                return "";
     }
 }
 
@@ -378,7 +389,18 @@ bool ui_state_feed(UiState *s, const KeyMsg *msg, uint32_t now_ms, UiResult *out
             push_screen(s, UI_SCREEN_SWITCH, false);
             return false;
         }
-        /* 认输不可逆：本层只报「用户想认输」，真的结束对局由调用方决定 */
+        /* 认输不可逆 → 先过一道确认界面。这里**只进界面、不产生动作**，
+         * 真正吐 UI_ACT_FORFEIT 的是下面 UI_SCREEN_CONFIRM 那一步。 */
+        push_screen(s, UI_SCREEN_CONFIRM, false);
+        return false;
+
+    case UI_SCREEN_CONFIRM:
+        if (f->cursor == UI_CONFIRM_CANCEL) {
+            pop_screen(s);          /* 取消 → 回弹层，什么都没发生 */
+            return false;
+        }
+        /* 走到这里才算真的认输。本层不结束对局：调用方接到动作后置
+         * BATTLE_LOSE、再调 ui_state_show_result，所以这里界面先不动。 */
         return emit(out, UI_ACT_FORFEIT, 0);
 
     case UI_SCREEN_SWITCH:

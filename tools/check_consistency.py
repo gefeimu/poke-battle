@@ -155,7 +155,7 @@ def main():
     print("\n[9] README 测试计数")
     counts = [("data_selfcheck", 83), ("test_calc", 83), ("test_battle", 100),
               ("test_ai", 19), ("test_sprites", 14), ("test_font", 25),
-              ("test_render", 79), ("test_input", 51), ("test_ui", 94)]
+              ("test_render", 79), ("test_input", 51), ("test_ui", 118)]
     for name, n in counts:
         check(f"{n} 项" in rd, f"README 记录 {name} = {n} 项")
 
