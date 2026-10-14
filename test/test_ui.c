@@ -580,7 +580,7 @@ static void test_texts(void)
           "列表类界面的行文字来自数据，不在这里写死");
     check(ui_item_label(UI_SCREEN_MAIN, 99) == NULL, "越界取标签返回 NULL");
     check(ui_screen_rows(UI_SCREEN_CONFIRM) == 2, "确认界面一屏 2 行");
-    check(ui_screen_rows(UI_SCREEN_TEAM) == 8, "队伍列表一屏 8 行");
+    check(ui_screen_rows(UI_SCREEN_TEAM) == 6, "队伍列表一屏 6 行");
     check(ui_screen_rows(UI_SCREEN_BATTLE) == 2, "招式菜单是 2x2，占两行");
     check(ui_screen_rows(UI_SCREEN_SWITCH) == 6, "换人列表一屏 6 行");
 }

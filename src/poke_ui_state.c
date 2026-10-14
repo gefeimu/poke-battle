@@ -11,7 +11,7 @@ int ui_screen_rows(UiScreen sc)
 {
     switch (sc) {
     case UI_SCREEN_MAIN:    return UI_MAIN_COUNT;   /* 选择队伍 / 开始对战 / 队伍配置 */
-    case UI_SCREEN_TEAM:    return 8;   /* 图鉴列表一屏 8 行 */
+    case UI_SCREEN_TEAM:    return 6;   /* 图鉴列表一屏 6 行（带 32x32 图标，行高 37） */
     case UI_SCREEN_BATTLE:  return 2;   /* 招式菜单是 2x2，占两行 */
     case UI_SCREEN_ACTION:  return 2;
     case UI_SCREEN_CONFIRM: return 2;

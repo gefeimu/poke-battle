@@ -337,10 +337,12 @@ static int selfcheck(void)
        "短按确定 → 开始对战并进日志播放（阶段 %d）",
        (int)ses_phase(&g_app.ses));
 
-    /* ③ 长按确定 → 一次跳过整段开场日志 → 等我方输入 */
-    sim_hold(KEY_OK, KEY_LONG_PRESS_MS + 200);
+    /* ③ **不投任何键**，纯推进时间 → 开场日志自动播完并转入等我方输入。
+     *    这是「开场自动推进」的关键：玩家什么都不按，日志也会自己往下走。
+     *    长按跳过那条路仍由下面的 ④ 覆盖（出招后用 sim_hold 跳过一段日志）。 */
+    sim_advance(5200);
     CK(ses_phase(&g_app.ses) == SES_PHASE_INPUT,
-       "长按确定 → 跳过日志并转入等我方输入（阶段 %d）",
+       "不投键推进 5200ms → 开场日志自动放完并转入等我方输入（阶段 %d）",
        (int)ses_phase(&g_app.ses));
     CK(ui_state_screen(&g_app.ses.ui) == UI_SCREEN_BATTLE,
        "落在战斗界面（界面 %d）", (int)ui_state_screen(&g_app.ses.ui));

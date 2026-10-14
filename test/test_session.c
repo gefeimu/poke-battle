@@ -22,6 +22,7 @@
 #include <string.h>
 
 #include "poke_font_data.h"
+#include "poke_icons.h"
 #include "poke_session.h"
 
 /* ================================================================ 固定随机源 */
@@ -199,6 +200,21 @@ static int play_log(Rig *r)
         n++;
     }
     return n;
+}
+
+/*
+ * 只推进时间、不投按键：以 16 ms 步长调 ses_tick（设备侧按住连发的节奏）。
+ *
+ * **绝不走 feed**：开场日志的受控自动推进是靠 ses_tick 里那条惰性计时走的，
+ * 投按键会把它的语义覆盖掉（一次 CLICK 就算一条，跟自动推进没关系）。要测
+ * 自动推进，就只能喂时间。
+ */
+static void advance(Rig *r, uint32_t ms)
+{
+    for (uint32_t i = 0; i + 16 <= ms; i += 16) {
+        r->t += 16;
+        ses_tick(&r->s, r->t);
+    }
 }
 
 /* 从主菜单开打，并把开场日志播完（停在等输入） */
@@ -684,6 +700,245 @@ static void test_log_skip_and_swallow(void)
           phase_name(ses_phase(&r.s)));
 }
 
+/*
+ * 开场日志的**受控自动推进**：不投任何键，光靠时间就能一条条放完。
+ *
+ * 这是本轮新增的行为，所以用例分四段互相独立地钉住它的四条契约：
+ *   1. 无按键时按停留时长自动前进，≤5000ms 走完开场；
+ *   2. 按住任一键暂停，松开后重新计时继续；
+ *   3. 单次短按只前进一条，**不把自动推进关掉**；
+ *   4. 长按取消自动并一次跳到末尾（落在 INPUT）。
+ * 四段用各自的 Rig，互不污染 —— 自动推进的计时状态藏在 Session 里，
+ * 复用同一个 Rig 会让上一段的残留时间影响下一段。
+ */
+static void test_log_autoplay(void)
+{
+    printf("\n[开场自动推进] 无按键时按停留时长逐条前进\n");
+
+    /* ---- 1. 不投键，只推进时间 ---- */
+    Rig r;
+    rig_init(&r, AI_ROOKIE);
+    down_(&r);          /* 移到「开始对战」 */
+    ok_(&r);            /* 开始对战 → 开场日志，自动推进打开 */
+    check(ses_phase(&r.s) == SES_PHASE_LOG, "开局进日志播放（%s）",
+          phase_name(ses_phase(&r.s)));
+    check(r.s.log_auto, "开场这批是自动推进的（log_auto=1）");
+    check(r.s.log_next == 0 && r.s.log_end == r.s.b.log.count,
+          "游标从 0 起、终点 = 开场日志数（%u/%u）",
+          r.s.log_next, r.s.log_end);
+
+    uint32_t t0 = r.t;
+    advance(&r, 5000);
+    check(ses_phase(&r.s) == SES_PHASE_INPUT,
+          "不投键、推进 5000ms 后自己进等输入（%s，用了 %u ms）",
+          phase_name(ses_phase(&r.s)), r.t - t0);
+    check(r.s.log_next == r.s.log_end, "自动放完时游标停在终点（%u/%u）",
+          r.s.log_next, r.s.log_end);
+    check(r.s.log_advances >= 4, "自动前进也计入推进统计（%u 次）",
+          r.s.log_advances);
+    check(ses_log_index(&r.s) + 1 == r.s.log_end,
+          "显示的是最后一条（第 %u 条）", ses_log_index(&r.s) + 1);
+
+    /* ---- 2. 按住暂停 → 松开恢复 ---- */
+    Rig p;
+    rig_init(&p, AI_ROOKIE);
+    down_(&p);
+    ok_(&p);
+    check(p.s.log_auto, "再次开局仍是自动推进");
+    ev(&p, KEY_OK, KEY_EV_PRESS);        /* 按住确定（不抬起）*/
+    uint32_t next0 = p.s.log_next;
+    advance(&p, 2000);                   /* 2000ms > 停留时长，不暂停早该前进 */
+    check(ses_phase(&p.s) == SES_PHASE_LOG, "按住时不离开日志播放（%s）",
+          phase_name(ses_phase(&p.s)));
+    check(p.s.log_next == next0, "按住 2000ms 期间游标一步不动（%u）",
+          p.s.log_next);
+    ev(&p, KEY_OK, KEY_EV_RELEASE);
+    advance(&p, 5000);
+    check(ses_phase(&p.s) == SES_PHASE_INPUT, "松开后恢复自动推进（%s）",
+          phase_name(ses_phase(&p.s)));
+    check(p.s.log_next > next0, "松开后游标继续前进（%u → %u）",
+          next0, p.s.log_next);
+
+    /* ---- 3. 短按只前进一步，自动推进不受影响 ---- */
+    Rig c;
+    rig_init(&c, AI_ROOKIE);
+    down_(&c);
+    ok_(&c);
+    uint32_t n = c.s.log_next;
+    ev(&c, KEY_OK, KEY_EV_CLICK);        /* 只投一次短按，不推进时间 */
+    check(c.s.log_next == n + 1, "短按一次恰好前进一条（%u → %u）",
+          n, c.s.log_next);
+    check(c.s.log_auto, "短按之后仍保持自动推进（log_auto=1）"
+          "（手动按一下只是提前放，不该顺手关掉自动）");
+
+    /* ---- 4. 长按取消自动并跳到末尾 ---- */
+    Rig l;
+    rig_init(&l, AI_ROOKIE);
+    down_(&l);
+    ok_(&l);
+    uint32_t end = l.s.log_end;
+    hold(&l, KEY_OK);
+    check(!l.s.log_auto, "长按取消了自动推进（log_auto=0）");
+    check(l.s.log_next == end, "长按一次跳到最后（%u/%u）", l.s.log_next, end);
+    check(l.s.log_skips == 1, "记了一次快进（%u）", l.s.log_skips);
+    check(ses_phase(&l.s) == SES_PHASE_INPUT, "跳到末尾后进等输入（%s）",
+          phase_name(ses_phase(&l.s)));
+}
+
+/*
+ * 日志播放中的状态行与等待动效：自动中 vs 手动中两套提示。
+ *
+ * 右侧那句提示是玩家唯一能看出「现在要不要按」的地方：自动推进时显示
+ * 「自动中…」，手动推进时显示「确定   长按跳过」。两种状态用错（比如自动
+ * 时也显示「长按跳过」）不会崩溃，只会让人一直傻按。
+ */
+static void test_log_turn_status(void)
+{
+    printf("\n[日志状态行] 回合数 / 自动提示 / 等待动效\n");
+
+    /* 开场（自动推进）：左报回合、右报自动、不画动效 */
+    Rig r;
+    rig_init(&r, AI_ROOKIE);
+    down_(&r);
+    ok_(&r);
+    BattleScreen v;
+    ses_view(&r.s, &v);
+    check(v.status_left && strcmp(v.status_left, "第1回合") == 0,
+          "开场状态行左侧 = %s（回合数从 1 起）",
+          v.status_left ? v.status_left : "(null)");
+    check(v.status_right && strcmp(v.status_right, "自动中…") == 0,
+          "自动推进时右侧 = %s", v.status_right ? v.status_right : "(null)");
+    check(v.wait_anim == 0, "自动推进时不画等待动效（wait_anim=%d）",
+          v.wait_anim);
+
+    /* 回合中（手动推进）：左报回合、右报「确定 长按跳过」、画动效 1..4 */
+    Rig t;
+    rig_init(&t, AI_ROOKIE);
+    start_battle(&t);      /* 手动把开场放完，到等输入 */
+    ok_(&t);               /* 出招 → 进回合中的日志播放 */
+    check(ses_phase(&t.s) == SES_PHASE_LOG, "出招后进日志播放（%s）",
+          phase_name(ses_phase(&t.s)));
+    check(!t.s.log_auto, "回合中这批不是自动推进（log_auto=0）");
+    advance(&t, 250);      /* 走一两帧，让动效相位被 tick 更新 */
+    ses_view(&t.s, &v);
+    char want[24];
+    snprintf(want, sizeof(want), "第%u回合", (unsigned)t.s.b.turn);
+    check(v.status_left && strcmp(v.status_left, want) == 0, "回合中左侧 = %s",
+          v.status_left ? v.status_left : "(null)");
+    check(v.status_right && strcmp(v.status_right, "确定   长按跳过") == 0,
+          "手动推进时右侧 = %s（不是「自动中…」）",
+          v.status_right ? v.status_right : "(null)");
+    check(v.wait_anim >= 1 && v.wait_anim <= 4,
+          "手动推进时画等待动效（wait_anim=%d，帧号 1..4）", v.wait_anim);
+}
+
+/*
+ * 战斗 HUD 的两块新增内容：右上角天气标志、我方血条框里的携带道具名。
+ * 映射要跟引擎状态走，不能是写死的 —— 所以逐种天气/有无道具各断一次。
+ */
+static void test_battle_hud(void)
+{
+    printf("\n[战斗 HUD] 天气标志 / 携带道具名\n");
+
+    Rig r;
+    rig_init(&r, AI_ROOKIE);
+    start_battle(&r);
+    BattleScreen v;
+
+    /* 默认晴天队首发九尾带「日照」：一声不响开场天气就是晴天 */
+    ses_view(&r.s, &v);
+    check(r.s.b.wx == WX_SUN, "开局天气是晴天（wx=%d）", (int)r.s.b.wx);
+    check(v.wx_text && strcmp(v.wx_text, "晴") == 0, "晴天标志文字 = %s",
+          v.wx_text ? v.wx_text : "(null)");
+
+    /* 四种天气的映射；WX_NONE 不画（NULL）。直接改引擎的天气位，
+     * 再取一次一屏数据 —— 这就是「映射跟着状态走」的验证。 */
+    r.s.b.wx = WX_RAIN; ses_view(&r.s, &v);
+    check(v.wx_text && strcmp(v.wx_text, "雨") == 0, "雨天 → %s",
+          v.wx_text ? v.wx_text : "(null)");
+    r.s.b.wx = WX_SAND; ses_view(&r.s, &v);
+    check(v.wx_text && strcmp(v.wx_text, "沙") == 0, "沙暴 → %s",
+          v.wx_text ? v.wx_text : "(null)");
+    r.s.b.wx = WX_HAIL; ses_view(&r.s, &v);
+    check(v.wx_text && strcmp(v.wx_text, "雹") == 0, "冰雹 → %s",
+          v.wx_text ? v.wx_text : "(null)");
+    r.s.b.wx = WX_NONE; ses_view(&r.s, &v);
+    check(v.wx_text == NULL, "无天气不画标志（wx_text=NULL）");
+
+    /* 携带道具：默认首发 pid 38 带道具 226（木炭） */
+    BattleMon *me = battle_active(&r.s.b, 0);
+    check(me->base.item == 226, "首发携带道具 id = %u（木炭）", me->base.item);
+    const ItemDef *charcoal = item_get(226);
+    check(charcoal && charcoal->name_cn && strcmp(charcoal->name_cn, "木炭") == 0,
+          "道具 226 的中文名 = %s（应「木炭」）",
+          charcoal && charcoal->name_cn ? charcoal->name_cn : "(null)");
+    ses_view(&r.s, &v);
+    check(v.my_item && charcoal && strcmp(v.my_item, charcoal->name_cn) == 0,
+          "HUD 道具名 = %s", v.my_item ? v.my_item : "(null)");
+
+    /* 换成无道具就不画（NULL），不然会留一个空字符串在那 */
+    me->base.item = 0;
+    ses_view(&r.s, &v);
+    check(v.my_item == NULL, "无道具不画名字（my_item=NULL）");
+}
+
+/*
+ * 换人页的行数据：行高（带图标的高行）、行首图标、HP 条比例、等级、HP 数字。
+ * 这几样只有换人这一屏有（其余列表行没图标 / 没 HP 条），单独断一遍。
+ */
+static void test_switch_menu_rows(void)
+{
+    printf("\n[换人页数据] 行高 / 图标 / HP 条 / 等级 / HP 数字\n");
+
+    Rig r;
+    rig_init(&r, AI_ROOKIE);
+    start_battle(&r);
+
+    /* 把列表第 1 只（队伍槽 1）压到 68/153 —— 让「cur/max」这个格式有确定值
+     * 可断，也顺带验 HP 条比例确实由血量算出来而不是写死的。 */
+    BattleMon *t1 = &r.s.b.me.team[1];
+    t1->cur_hp = 68;
+    t1->hp_max = 153;
+
+    hold(&r, KEY_OK);   /* 战斗界面长按 → 弹层 */
+    ok_(&r);            /* 弹层第 1 项 → 换人列表 */
+    check(ui_state_screen(&r.s.ui) == UI_SCREEN_SWITCH, "进入换人列表（%s）",
+          screen_name(ui_state_screen(&r.s.ui)));
+
+    MenuScreen m;
+    check(ses_menu_view(&r.s, &m), "换人页吐菜单数据");
+    check(m.row_h == MENU_ROW_H_ICON, "换人页用带图标的高行（row_h=%d，应 %d）",
+          m.row_h, MENU_ROW_H_ICON);
+    check(m.count == TEAM_SIZE - 1, "列出除出战外的 %d 只（实际 %d）",
+          TEAM_SIZE - 1, m.count);
+    check(m.rows == 6, "一屏 6 行（实际 %d）", m.rows);
+    check(m.scrollbar == false, "5 项以内不画滚动条");
+
+    for (int i = 0; i < m.count; i++) {
+        uint8_t slot = r.s.ui.model.switch_slot[i];
+        const BattleMon *bm = &r.s.b.me.team[slot];
+        check(m.row_icons[i] != NULL
+              && m.row_icons[i] == icon_get(bm->base.species_id),
+              "第 %d 行图标按种族 id 取（槽 %u，species %u）",
+              i + 1, slot, bm->base.species_id);
+        check(m.row_hp_permil[i] >= 1 && m.row_hp_permil[i] <= 1000,
+              "第 %d 行 HP‰ ∈ 1..1000（实际 %d）", i + 1, m.row_hp_permil[i]);
+        check(m.subs[i] && strcmp(m.subs[i], "Lv50") == 0, "第 %d 行等级 = %s",
+              i + 1, m.subs[i] ? m.subs[i] : "(null)");
+        char hp[16];
+        snprintf(hp, sizeof(hp), "%u/%u", (unsigned)bm->cur_hp,
+                 (unsigned)bm->hp_max);
+        check(m.notes[i] && strcmp(m.notes[i], hp) == 0,
+              "第 %d 行 HP 数字 = %s（应 %s）", i + 1,
+              m.notes[i] ? m.notes[i] : "(null)", hp);
+    }
+    /* 首行就是刚压到 68/153 的那只：把格式与 HP 条的换算钉成确定值 */
+    check(m.notes[0] && strcmp(m.notes[0], "68/153") == 0,
+          "首行 HP 数字 = %s", m.notes[0] ? m.notes[0] : "(null)");
+    check(m.row_hp_permil[0] == 444, "首行 HP‰ = 68*1000/153 = 444（实际 %d）",
+          m.row_hp_permil[0]);
+}
+
 static void test_view(void)
 {
     printf("\n[一屏数据] BattleScreen 全部来自引擎\n");
@@ -1070,7 +1325,8 @@ static void test_menu_view(void)
     check(ses_layer(&r.s) == SES_LAYER_MENU, "队伍配置是整屏菜单层");
     check(ses_menu_view(&r.s, &m), "队伍配置要画菜单");
     check(m.count == UI_TEAM_COUNT, "共 %d 项（图鉴只数）", m.count);
-    check(m.rows == 8, "一屏 8 行（实际 %d）", m.rows);
+    check(m.rows == 6, "一屏 6 行（带 32x32 图标的高行的容量）（实际 %d）",
+          m.rows);
     check(m.scrollbar == true, "386 项要滚动条");
     check(m.status_left && strcmp(m.status_left, "1/386") == 0,
           "状态行左侧报序号（%s）", m.status_left ? m.status_left : "(null)");
@@ -1080,12 +1336,13 @@ static void test_menu_view(void)
         down_(&r);
     }
     check(ses_menu_view(&r.s, &m), "滚动了 12 格仍能取到菜单");
-    check(m.top == 5, "光标 12、一屏 8 行 → 窗口首行 = 5（实际 %d）", m.top);
+    /* 一屏 6 行、光标移到第 13 项（序号 12）→ 窗口首行 = 12-6+1 = 7 */
+    check(m.top == 7, "光标 12、一屏 6 行 → 窗口首行 = 7（实际 %d）", m.top);
     check(m.selected == 12, "光标 = 12");
-    /* 窗口首行 = 图鉴第 6 只（列表第 i 项 = 图鉴序号 i+1） */
-    const SpeciesDef *sd6 = species_get(6);
-    check(m.items[0] && sd6 && strcmp(m.items[0], sd6->name_cn) == 0,
-          "窗口首行是图鉴第 6 只（%s）",
+    /* 窗口首行 = 图鉴第 8 只（列表第 i 项 = 图鉴序号 i+1） */
+    const SpeciesDef *sd8 = species_get(8);
+    check(m.items[0] && sd8 && strcmp(m.items[0], sd8->name_cn) == 0,
+          "窗口首行是图鉴第 8 只（%s）",
           m.items[0] ? m.items[0] : "(null)");
     check(m.status_left && strcmp(m.status_left, "13/386") == 0,
           "计数跟着光标走（%s）", m.status_left ? m.status_left : "(null)");
@@ -1376,6 +1633,10 @@ int main(void)
     test_forfeit();
     test_result_and_replay();
     test_log_skip_and_swallow();
+    test_log_autoplay();
+    test_log_turn_status();
+    test_battle_hud();
+    test_switch_menu_rows();
     test_view();
     test_team_screen();
     test_menu_view();

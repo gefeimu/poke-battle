@@ -24,6 +24,7 @@
 #include <string.h>
 
 #include "poke_font_data.h"
+#include "poke_icons.h"
 #include "poke_render.h"
 #include "poke_sprites.h"
 #include "poke_ui.h"
@@ -50,6 +51,15 @@ static void check(int cond, const char *fmt, ...)
 }
 
 static uint16_t g_fb[W * H];
+/* 差分包围盒用的第二块缓冲：与 g_fb 用同一次绘制、只差一个待测元素，
+ * 两张图逐像素求不同 -> 那些像素就是该元素占的地方。 */
+static uint16_t g_fb2[W * H];
+
+static const UiFonts kFonts = {
+    .box    = &kFontApp12,
+    .dialog = &kFontApp16,
+    .label  = &kFontHp10,
+};
 
 static Surface make(void)
 {
@@ -57,6 +67,56 @@ static Surface make(void)
     memset(g_fb, 0, sizeof(g_fb));
     r_init(&s, g_fb, W, H, W);
     return s;
+}
+
+/* 与 make() 相同，但画进指定缓冲（差分测试要画两张） */
+static Surface make_at(uint16_t *fb)
+{
+    Surface s;
+    memset(fb, 0, W * H * sizeof(uint16_t));
+    r_init(&s, fb, W, H, W);
+    return s;
+}
+
+/*
+ * 「差分包围盒」：两张除了一个待测元素外完全相同的帧缓冲，逐像素比较，
+ * 返回所有不同像素的包围盒（闭区间 x0..x1 / y0..y1）。
+ *
+ * 为什么用这个手法：新增的几个元素（天气胶囊、道具名、等待动效、行首图标、
+ * 换人 HP 条）的位置由绘制代码自己按版式常量算出来，测试里写不出一个
+ * 「必然正确」的固定坐标。用「带它 / 不带它」两张图反推它落在哪，就能
+ * 钉住「它在版式规定的位置、且尺寸不超过预算」，而不用抄实现里的公式。
+ */
+typedef struct {
+    int  x0, y0, x1, y1;
+    bool empty;      /* 两张图完全一样（该元素一个像素都没落） */
+} BBox;
+
+static BBox bbox_diff(const uint16_t *a, const uint16_t *b)
+{
+    BBox r = { W, H, -1, -1, true };
+    for (int y = 0; y < H; y++) {
+        for (int x = 0; x < W; x++) {
+            if (a[y * W + x] != b[y * W + x]) {
+                r.empty = false;
+                if (x < r.x0) r.x0 = x;
+                if (y < r.y0) r.y0 = y;
+                if (x > r.x1) r.x1 = x;
+                if (y > r.y1) r.y1 = y;
+            }
+        }
+    }
+    return r;
+}
+
+/* 包围盒是否完全落在 (x,y,w,h) 里（含边界）；空的判为不在 */
+static bool bbox_in(const BBox *b, int x, int y, int w, int h)
+{
+    if (b->empty) {
+        return false;
+    }
+    return b->x0 >= x && b->x1 <= x + w - 1 &&
+           b->y0 >= y && b->y1 <= y + h - 1;
 }
 
 /* ---------------------------------------------------------------- 颜色 */
@@ -665,6 +725,156 @@ static void test_menu_pixels(void)
           "弹层盖住了招式菜单（那里不再是招式格子的描边色）");
 }
 
+/* ---------------------------------------------------------------- HUD 差分包围盒 */
+
+/*
+ * 本轮新增的五个元素（天气胶囊 / 道具名 / 等待动效 / 行首图标 / 换人 HP 条）
+ * 的取点验证。每个都用「画两张、求差异包围盒」的手法：
+ *
+ *   在防什么：这些元素都是「有数据才画」，一旦绘制代码改动（比如把
+ *   wx_badge 画到左下角、把道具名挪进血条框、把动效画到状态行右侧），
+ *   单靠「嗯，好像还在」的肉眼很难发现；包围盒落在版式规定的矩形之外
+ *   会立刻失败。反过来，元素整个没画出来（bbox 为空）也算失败。
+ */
+static void test_hud_bbox(void)
+{
+    printf("\n[HUD 差分包围盒] 新元素各自落在版式规定的位置\n");
+
+    UiFonts f = kFonts;
+
+    /* ---- 我方道具名：画在 HP 数字行左侧 (118,138) 起 ---- */
+    BattleScreen d;
+    memset(&d, 0, sizeof(d));
+    d.me_name = "喷火龙";
+    d.me_lv = "Lv50";
+    d.me_hp_permil = 990;
+    d.me_hp_text = "68/153";
+    d.selected = -1;              /* 不留招式高亮，隔离差异 */
+    d.log[0] = "喷火龙 使用了 喷射火焰！";
+
+    Surface s = make_at(g_fb);
+    d.my_item = "木炭";
+    ui_battle_screen(&s, &f, &d);
+    s = make_at(g_fb2);
+    d.my_item = NULL;
+    ui_battle_screen(&s, &f, &d);
+
+    BBox ib = bbox_diff(g_fb, g_fb2);
+    int iw = font_text_width(&kFontApp12, "木炭");
+    /* MY_ITEM_X = 118、HB_ME_Y+MY_ITEM_DY = 138；文字用 12px 字库（行高 16） */
+    check(bbox_in(&ib, 118, 138, iw, 16),
+          "道具名画在 (118,138) 起的 %d×16 内（实测 bbox %d..%d y %d..%d）",
+          iw, ib.x0, ib.x1, ib.y0, ib.y1);
+
+    /* ---- 天气胶囊：右上角右对齐、y 4..19 ---- */
+    memset(&d, 0, sizeof(d));
+    d.selected = -1;
+    s = make_at(g_fb);
+    d.wx_text = "晴";
+    ui_battle_screen(&s, &f, &d);
+    s = make_at(g_fb2);
+    d.wx_text = NULL;
+    ui_battle_screen(&s, &f, &d);
+
+    BBox wb = bbox_diff(g_fb, g_fb2);
+    int tw = font_text_width(&kFontApp16, "晴");
+    /* 宽 = 文字宽 + 两倍内边距(6+6)，贴右边 4px：左端 = 240-4-(tw+12)，
+     * 右端像素 = 240-4-1 = 235；竖直 4..4+16-1 = 19。 */
+    int wx_x0 = UI_SCREEN_W - 4 - (tw + 12);
+    check(!wb.empty && wb.x0 == wx_x0 && wb.x1 == 235 &&
+          wb.y0 == 4 && wb.y1 == 19,
+          "天气胶囊右对齐贴边：期望 x %d..235 y 4..19（实测 %d..%d y %d..%d）",
+          wx_x0, wb.x0, wb.x1, wb.y0, wb.y1);
+
+    /* ---- 日志等待动效：状态行左侧 (80,292) 起 ---- */
+    memset(&d, 0, sizeof(d));
+    d.selected = -1;
+    d.status_left = NULL;        /* 隔离 x≈80 处，别让状态行文字混进包围盒 */
+    d.status_right = NULL;
+    s = make_at(g_fb);
+    d.wait_anim = 1;
+    ui_battle_screen(&s, &f, &d);
+    s = make_at(g_fb2);
+    d.wait_anim = 0;
+    ui_battle_screen(&s, &f, &d);
+
+    BBox ab = bbox_diff(g_fb, g_fb2);
+    /* 画在 STATUS_TEXT_X-20 = 80、STATUS_Y+4 = 292，16px 字库 */
+    check(bbox_in(&ab, 80, 288, 16, 28),
+          "等待动效画在状态行 (80,292) 处（实测 bbox %d..%d y %d..%d）",
+          ab.x0, ab.x1, ab.y0, ab.y1);
+
+    /* wait_anim=0 必须表示「不画」而不是「画了个空白」：动效格应是纯白 */
+    int clean = 1;
+    for (int y = 292; y < 308; y++) {
+        for (int x = 80; x < 92; x++) {
+            if (g_fb2[y * W + x] != RGB565_C(255, 255, 255)) {
+                clean = 0;
+            }
+        }
+    }
+    check(clean, "wait_anim=0 时动效格是纯白（0 = 不落墨）");
+
+    /* ---- 菜单行首图标：32x32 画在 (12,52) ---- */
+    const SpriteEntry *ic = icon_get(1);
+    check(ic != NULL, "icon_get(1) 取到行首图标");
+
+    MenuScreen m;
+    memset(&m, 0, sizeof(m));
+    m.title = "换人";
+    m.count = 1;
+    m.rows = 1;
+    m.row_h = MENU_ROW_H_ICON;
+    m.selected = -1;             /* 不高亮：否则高亮块也进包围盒 */
+    /* items[0] 故意留 NULL：有图标时文字会右移，若画了文字就会污染差异 */
+
+    s = make_at(g_fb);
+    m.row_icons[0] = ic;
+    ui_menu_screen(&s, &f, &m);
+    s = make_at(g_fb2);
+    m.row_icons[0] = NULL;
+    ui_menu_screen(&s, &f, &m);
+
+    BBox gb = bbox_diff(g_fb, g_fb2);
+    /* MENU_BOX_X+ MENU_ICON_DX = 12；首行 y = 44+6、图标再下移 2 -> 52 */
+    check(bbox_in(&gb, 12, 52, 32, 32),
+          "行首图标画在 (12,52) 的 32×32 内（实测 bbox %d..%d y %d..%d）",
+          gb.x0, gb.x1, gb.y0, gb.y1);
+
+    /* ---- 换人页 HP 条：74x8 画在 (130,54) ---- */
+    memset(&m, 0, sizeof(m));
+    m.title = "换人";
+    m.count = 1;
+    m.rows = 1;
+    m.row_h = MENU_ROW_H_ICON;
+    m.selected = -1;
+    m.row_hp_permil[0] = 500;    /* 一个固定的中段比例 */
+
+    s = make_at(g_fb);
+    ui_menu_screen(&s, &f, &m);
+    s = make_at(g_fb2);
+    m.row_hp_permil[0] = 0;      /* 哨兵 0 = 这一屏没有血条 */
+    ui_menu_screen(&s, &f, &m);
+
+    BBox hb = bbox_diff(g_fb, g_fb2);
+    /* MENU_BOX_X + MENU_HPBAR_X = 130；行 y 50 再下移 4 -> 54 */
+    check(bbox_in(&hb, 130, 54, 74, 8),
+          "换人页 HP 条画在 (130,54) 的 74×8 内（实测 bbox %d..%d y %d..%d）",
+          hb.x0, hb.x1, hb.y0, hb.y1);
+    /* permil=0（哨兵）时必须一个像素都没画：该矩形应整块保持板底白色。
+     * 只比较「带条 / 不带条」两张图的差异为空是错的（差异恰恰是那条），
+     * 所以直接看「不带条」那张里这块是不是白的。 */
+    int blank = 1;
+    for (int y = 54; y < 62; y++) {
+        for (int x = 130; x < 204; x++) {
+            if (g_fb2[y * W + x] != RGB565_C(255, 255, 255)) {
+                blank = 0;
+            }
+        }
+    }
+    check(blank, "permil=0 时该矩形整块保持板底白色（哨兵 0 = 不画血条）");
+}
+
 int main(void)
 {
     printf("渲染层自检\n");
@@ -679,6 +889,7 @@ int main(void)
     test_text_draw();
     test_ui_pixels();
     test_menu_pixels();
+    test_hud_bbox();
 
     printf("\n=== 结果: %d 通过, %d 失败 ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

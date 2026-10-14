@@ -71,6 +71,10 @@ typedef struct {
     const char *move_pp[4];          /* 剩余 PP，纯数字 */
     int         selected;            /* 高亮第几项，-1 = 不高亮 */
 
+    const char *wx_text;             /* 当前天气（"晴"/"雨"/"沙"/"雹"）；NULL 则不画 */
+    const char *my_item;             /* 我方携带道具的中文名；NULL 则不画 */
+    int         wait_anim;           /* 等待手动推进的动效帧：0 = 不画，1..4 = 帧号 */
+
     const char *status_left;         /* 状态行左侧（如 "PP 15/15"） */
     const char *status_right;        /* 状态行右侧（键位提示） */
 } BattleScreen;
@@ -112,6 +116,14 @@ void ui_dialog(Surface *s, int x, int y, int w, int h, int radius);
 #define UI_MENU_ROWS_MAX 8
 
 /*
+ * 带 32x32 图标的列表行高。图标 32 高 + 上下各 ~2px 呼吸，
+ * 队伍配置/换人每屏 6 行：6*37 + 上下各 6 = 234，列表板 44..278，
+ * 不压 288 的状态行。会话层要按屏填 MenuScreen.row_h，所以这个值
+ * 必须放在头文件里（不能只放 poke_ui.c）。
+ */
+#define MENU_ROW_H_ICON 37
+
+/*
  * 结算大字的配色档位。
  *
  * 为什么不让绘制层去**看文字**决定颜色（strcmp(name, "胜利")）：那样
@@ -144,9 +156,28 @@ typedef struct {
     const char *items[UI_MENU_ROWS_MAX];   /* 各行的文字 */
     const char *notes[UI_MENU_ROWS_MAX];   /* 各行右侧的小字（PP / HP），可 NULL */
 
+    /*
+     * 图标屏（队伍配置 / 选择队伍 / 换人）的三个逐行字段。非图标屏整体
+     * 保持 NULL / 0，版式与加图标之前逐像素一致。
+     *
+     *   row_icons     每行行首 32x32 图标；NULL = 不画（r_sprite 按原生
+     *                 32x32 绘制、不缩放，索引 0 透明不落笔）
+     *   subs          每行第二行的左文字（换人行放 "Lv50"）；NULL = 不画
+     *   row_hp_permil 每行 HP 比例 0..1000；**> 0 才画**
+     *
+     * row_hp_permil 的哨兵是 0：存活的宝可梦 permil 必然 >= 1
+     * （cur_hp>=1 且 hp_max<=~999 → cur_hp*1000/hp_max >= 1），而换人列表
+     * 只列还活着的，所以 0 只可能是「这个屏没有 HP 条」。MenuScreen 的
+     * 构造方普遍 memset 清零，于是不需要每处都填 -1。
+     */
+    const SpriteEntry *row_icons[UI_MENU_ROWS_MAX];
+    const char *subs[UI_MENU_ROWS_MAX];
+    int  row_hp_permil[UI_MENU_ROWS_MAX];
+
     int  count;           /* 一共有几项（可能远多于 rows） */
     int  top;             /* 滚动窗口的首项序号 */
     int  rows;            /* 这一屏列几行（<= UI_MENU_ROWS_MAX） */
+    int  row_h;           /* 行高；0 = 用默认 MENU_ROW_H(28)。图标屏用 MENU_ROW_H_ICON(37) */
     int  selected;        /* 高亮第几项（**绝对序号**，不是窗口内偏移）；-1 = 不高亮 */
 
     bool scrollbar;       /* count > rows 时画右侧滚动条 */

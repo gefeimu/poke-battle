@@ -8,6 +8,7 @@
 
 #include "poke_species.h"
 #include "poke_sprites.h"
+#include "poke_icons.h"
 
 /* ---------------------------------------------------------------- 预设队伍 */
 
@@ -307,6 +308,14 @@ static void begin_log(Session *s)
         finish_log(s);   /* 没有新日志：直接决定下一步（护栏触发时就是这样） */
         return;
     }
+    /* 只有开场那一批（log_next == 0）自动推进；回合中的日志仍要玩家
+     * 一条条按。开场的计时状态在这里重置，出发点是「未计时」。 */
+    if (s->log_next == 0) {
+        s->log_auto = true;
+        s->log_at_for = SES_LOG_AT_NONE;
+    } else {
+        s->log_auto = false;
+    }
     s->phase = SES_PHASE_LOG;
 }
 
@@ -324,8 +333,57 @@ static void log_step(Session *s, uint32_t n)
     s->log_advances++;
 }
 
+/*
+ * 当前这条日志该停多久。
+ *
+ * 关键事件（天气/特性触发/威吓/倒下…）多停一拍，让玩家看清发生了什么。
+ * strstr 是逐字节匹配 UTF-8 —— 正是想要的：这些关键字都是完整词，
+ * 不会落在多字节字符中间，所以子串匹配等价于词匹配。
+ */
+static uint32_t log_dwell_for(const Session *s)
+{
+    const char *t = ses_log_at(s, s->log_next);
+    if (!t) {
+        return SES_LOG_DWELL_MS;
+    }
+    static const char *const kKey[] = {"天气", "特性", "起作用", "威吓", "倒下", "濒死"};
+    for (unsigned i = 0; i < sizeof(kKey) / sizeof(kKey[0]); i++) {
+        if (strstr(t, kKey[i])) {
+            return SES_LOG_DWELL_KEY_MS;
+        }
+    }
+    return SES_LOG_DWELL_MS;
+}
+
+/*
+ * 开场日志的受控自动推进：无按键时按停留时长逐条前进。
+ *
+ * 惰性起表：只有「本条真正成为当前条」之后才开始计时，这样中途被暂停
+ * （key_down）或手动推进都不会把上一条的剩余时间带过来。
+ */
+static void ses_log_tick(Session *s, uint32_t now_ms)
+{
+    if (!s->log_auto) {
+        return;                 /* 回合中/已被长按取消：只等手动推进 */
+    }
+    if (s->key_down) {
+        s->log_at_for = SES_LOG_AT_NONE;   /* 按住暂停；松开后重新计时 */
+        return;
+    }
+    if (s->log_at_for != s->log_next) {    /* 惰性起表：本条到点后才开始计时 */
+        s->log_at = now_ms;
+        s->log_at_for = s->log_next;
+        s->log_dwell_ms = log_dwell_for(s);
+    }
+    if (now_ms - s->log_at >= s->log_dwell_ms) {
+        s->log_at_for = SES_LOG_AT_NONE;   /* 下一条重新起表 */
+        log_step(s, 1);                    /* 到点前进一条（可能就此离开 LOG 阶段）*/
+    }
+}
+
 static void enter_input(Session *s)
 {
+    s->log_auto = false;   /* 离开日志阶段就清掉自动标记，避免残留影响下一批 */
     refresh_model(s);
     if (ui_state_screen(&s->ui) != UI_SCREEN_BATTLE) {
         /* 正常情况下已经停在战斗主界面（出招/换人都在那儿收尾）；
@@ -337,6 +395,7 @@ static void enter_input(Session *s)
 
 static void enter_force_switch(Session *s)
 {
+    s->log_auto = false;   /* 离开日志阶段就清掉自动标记，避免残留影响下一批 */
     refresh_model(s);
     uint8_t slots[UI_TEAM_SLOTS];
     int n = s->ui.model.switch_count;
@@ -356,6 +415,7 @@ static void enter_force_switch(Session *s)
 
 static void to_result(Session *s)
 {
+    s->log_auto = false;   /* 离开日志阶段就清掉自动标记，避免残留影响下一批 */
     s->force_pending = false;
     ui_state_show_result(&s->ui, (int)s->b.result);
     s->phase = SES_PHASE_RESULT;
@@ -500,6 +560,12 @@ void ses_init(Session *s, uint8_t ai_level)
         return;
     }
     *s = (Session){ 0 };
+    /* 整体清零后 log_at_for 会变成 0，而 0 是一个**合法序号** —— 不清成
+     * 哨兵，惰性起表的第一帧就会误判成「已经在为第 0 条计时」而不起表。 */
+    s->log_at_for = SES_LOG_AT_NONE;
+    s->log_auto = false;
+    s->key_down = false;
+    s->wait_anim = 0;
     s->swallow_key = -1;
     s->team_seed = 0x9E3779B9u;   /* 非零起始，保证抽签序列有变化 */
     ai_config_default(&s->ai, ai_level);
@@ -588,6 +654,14 @@ void ses_feed(Session *s, const KeyMsg *msg, uint32_t now_ms)
         return;
     }
 
+    /* 维护「是否有键按着」：按住 = 暂停开场日志的自动推进。
+     * 放在 swallow 分支之前，是因为长按跳过（LONG）之后 key_down 可能
+     * 还没被 RELEASE 清掉，先维护更贴近真实电平。
+     * **不能用 key_is_down()** —— 单测直接投事件、不走 key_poll，拿不到
+     * 真实电平，只能靠事件自己记。 */
+    if (msg->ev == KEY_EV_PRESS)   { s->key_down = true; }
+    if (msg->ev == KEY_EV_RELEASE) { s->key_down = false; }
+
     /*
      * 本层自己消化掉一次长按之后，紧随其后的 CLICK 要吞掉 —— 官方按键
      * 组件某些配置会把 LONG 与 CLICK 都报出来，不挡就会「长按跳过日志」
@@ -616,7 +690,11 @@ void ses_feed(Session *s, const KeyMsg *msg, uint32_t now_ms)
         }
         if (msg->ev == KEY_EV_CLICK) {
             log_step(s, 1);
+            /* 重置本条计时：**保持 log_auto 不变** —— 玩家手动按一下
+             * 只是提前放，不该顺手把自动推进关掉。 */
+            s->log_at_for = SES_LOG_AT_NONE;
         } else if (msg->ev == KEY_EV_LONG) {
+            s->log_auto = false;   /* 长按 = 取消自动，剩余日志全跳过 */
             s->swallow_key = (int8_t)KEY_OK;
             s->log_skips++;
             log_step(s, s->log_end - s->log_next);
@@ -652,8 +730,15 @@ void ses_tick(Session *s, uint32_t now_ms)
     if (!s) {
         return;
     }
+    if (s->phase == SES_PHASE_LOG) {
+        ses_log_tick(s, now_ms);
+        /* 动效相位与计时无关，只要在 LOG 阶段就一直转（经 ses_view 输出，
+         * 自动推进时是否画由 ses_view 自己按 log_auto 判断）。 */
+        s->wait_anim = (int8_t)((now_ms / SES_WAIT_ANIM_MS) & 3);
+        return;
+    }
     if (s->phase != SES_PHASE_MAIN && s->phase != SES_PHASE_INPUT) {
-        return;   /* 播放日志 / 结算时不接受「按住连发」 */
+        return;   /* 结算时不接受「按住连发」 */
     }
     ui_state_tick(&s->ui, now_ms, NULL);
 }
@@ -806,6 +891,21 @@ void ses_view(Session *s, BattleScreen *out)
         }
     }
 
+    /* ---- HUD：当前天气（右上角标志）---- */
+    switch (s->b.wx) {
+    case WX_RAIN: out->wx_text = "雨"; break;
+    case WX_SUN:  out->wx_text = "晴"; break;
+    case WX_SAND: out->wx_text = "沙"; break;
+    case WX_HAIL: out->wx_text = "雹"; break;
+    default: /* WX_NONE 以及将来新增的天气：不画 */ break;
+    }
+
+    /* ---- HUD：我方携带道具（血条框内文字，不加图标）---- */
+    if (me) {
+        const ItemDef *it = item_get(me->base.item);
+        out->my_item = (it && it->name_cn) ? it->name_cn : NULL;
+    }
+
     /* ---- 对话框：当前这条日志（折成两行）---- */
     const char *msg = ses_log_at(s, ses_log_index(s));
     s->log_text[0][0] = '\0';
@@ -833,10 +933,13 @@ void ses_view(Session *s, BattleScreen *out)
     s->status_left[0] = '\0';
     switch (s->phase) {
     case SES_PHASE_LOG:
-        /* 播放日志时左侧报回合数：日志刷得太快，用户需要知道打到第几回合了 */
-        snprintf(s->status_left, sizeof(s->status_left), "第 %u 回合",
+        /* 播放日志时左侧报回合数：日志刷得太快，用户需要知道打到第几回合了。
+         * 去空格是为了给状态行动效腾位置（3 位数时 61px + 起点 14 止于 75，
+         * 动效画在 x=80）。 */
+        snprintf(s->status_left, sizeof(s->status_left), "第%u回合",
                  (unsigned)s->b.turn);
-        snprintf(s->status_right, sizeof(s->status_right), "%s", "确定   长按跳过");
+        snprintf(s->status_right, sizeof(s->status_right), "%s",
+                 s->log_auto ? "自动中…" : "确定   长按跳过");
         break;
 
     case SES_PHASE_INPUT: {
@@ -868,6 +971,10 @@ void ses_view(Session *s, BattleScreen *out)
                  ui_screen_hint(ui_state_screen(&s->ui)));
         break;
     }
+    /* ---- 等待动效：只在「手动推进」的日志里画；帧号取 1..4（0 = 不画）---- */
+    out->wait_anim = (s->phase == SES_PHASE_LOG && !s->log_auto)
+                     ? (int)s->wait_anim + 1 : 0;
+
     out->status_left  = s->status_left[0] ? s->status_left : NULL;
     out->status_right = s->status_right[0] ? s->status_right : NULL;
 }
@@ -942,6 +1049,10 @@ bool ses_menu_view(Session *s, MenuScreen *out)
     if (out->rows < 1) {
         out->rows = 1;
     }
+    /* 带图标的三个列表用高行；其余屏（主菜单/弹层/认输/结算）保持默认 28 ——
+     * 那些屏的取点断言是按 28 钉死的，不能被动到。 */
+    out->row_h = (sc == UI_SCREEN_PRESET || sc == UI_SCREEN_TEAM
+                  || sc == UI_SCREEN_SWITCH) ? MENU_ROW_H_ICON : 0;
     out->scrollbar = (out->count > out->rows);
 
     /* ---- 结算：没有列表，一颗大字 ---- */
@@ -984,6 +1095,15 @@ bool ses_menu_view(Session *s, MenuScreen *out)
     }
     for (int i = 0; i < shown; i++) {
         out->items[i] = ses_row_text(s, out->top + i);
+        /* 图标屏的行首图标：图鉴列表 = 该图鉴物种；预设队列表 = 该队首发。 */
+        if (sc == UI_SCREEN_TEAM) {
+            out->row_icons[i] = icon_get((uint16_t)(out->top + i + 1));   /* 图鉴序号 = 下标+1 */
+        } else if (sc == UI_SCREEN_PRESET) {
+            int idx = out->top + i;
+            if (idx >= 0 && idx < UI_PRESET_COUNT) {
+                out->row_icons[i] = icon_get(kPreset[idx][0].pid);        /* 行首 = 该队首发宝可梦 */
+            }
+        }
     }
 
     /* ---- 换人列表：每行右侧挂当前 HP ----
@@ -996,6 +1116,14 @@ bool ses_menu_view(Session *s, MenuScreen *out)
                 continue;
             }
             const BattleMon *bm = &s->b.me.team[slot];
+            /* 图标用 base.species_id（真实物种），**不是 active_pid** ——
+             * Mega 形态的 pid >= 10000，图标表只覆盖 1..386，用 active_pid 会查不到。 */
+            out->row_icons[i] = icon_get(bm->base.species_id);
+            out->row_hp_permil[i] = bm->hp_max
+                ? (int)((uint32_t)bm->cur_hp * 1000 / bm->hp_max) : 0;
+            snprintf(s->switch_lv[slot], SES_LV_TEXT_MAX, "Lv%u",
+                     (unsigned)bm->base.level);
+            out->subs[i] = s->switch_lv[slot];
             snprintf(s->menu_note[i], sizeof(s->menu_note[i]), "%u/%u",
                      (unsigned)bm->cur_hp, (unsigned)bm->hp_max);
             out->notes[i] = s->menu_note[i];

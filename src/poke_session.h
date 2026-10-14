@@ -75,6 +75,22 @@ typedef enum {
  */
 #define SES_LOG_LINE_MAX 96
 
+/*
+ * 开场日志受控自动推进的参数。
+ *
+ *   停留 1000ms 是「够读完一句中文」又不拖沓的节奏：4 条开场日志连播约 4s。
+ *   关键行（天气/特性触发/威吓/倒下）多停一拍 1500ms —— 这些行是整局的
+ *   关键信息，值得让玩家看清。
+ *   等待动效 125ms/帧 = 8 帧/秒：这是「看得出来在转」的最慢可辨认速度，
+ *   再慢像卡住，再快像闪烁。
+ *   SES_LOG_AT_NONE 是 log_at_for 的哨兵：Session 会被整体清零，0 是一个
+ *   **合法序号**，所以「未计时」不能用 0 表示，得挑一个永远到不了的序号。
+ */
+#define SES_LOG_DWELL_MS      1000            /* 普通日志行的自动停留时长 */
+#define SES_LOG_DWELL_KEY_MS  1500            /* 关键日志行（天气/特性/倒下…）多停一拍 */
+#define SES_WAIT_ANIM_MS      125             /* 等待动效每帧的毫秒数 */
+#define SES_LOG_AT_NONE       0xFFFFFFFFu     /* log_at_for 的「未计时」哨兵值 */
+
 /* 队伍槽名（"Lv50"）的字节上限 */
 #define SES_LV_TEXT_MAX 8
 
@@ -110,6 +126,14 @@ typedef struct {
      * 播完（log_next == log_end）才决定下一步：结算 / 强制换人 / 等输入。 */
     uint32_t  log_next;
     uint32_t  log_end;
+
+    /* ---- 开场日志的受控自动推进 ---- */
+    bool      log_auto;      /* 本批日志是否自动前进（只有开场那批为 true）*/
+    uint32_t  log_at;        /* 当前这条日志的「到达时刻」(now_ms) */
+    uint32_t  log_at_for;    /* log_at 对应的绝对序号；!= log_next 表示计时需要重来 */
+    uint32_t  log_dwell_ms;  /* 当前这条日志的停留时长 */
+    bool      key_down;      /* 是否有任一键处于按下状态（按住 = 暂停自动推进）*/
+    int8_t    wait_anim;     /* 等待手动推进的动效相位 0..3（0 也是合法相位）*/
 
     /* 本层自己消化掉一次长按之后，紧随其后的 CLICK 要吞掉。理由与
      * poke_ui_state 里那条一样：上游（官方按键组件）有时会 LONG 与
@@ -154,6 +178,7 @@ typedef struct {
     char      menu_left[24];                  /* 菜单状态行左侧（"12/386"） */
     char      menu_sub[32];                   /* 结算大字下面那行 */
     char      menu_note[TEAM_SIZE][16];       /* 换人列表每行右侧的 "68/153" */
+    char      switch_lv[TEAM_SIZE][SES_LV_TEXT_MAX];  /* 换人列表每行第二行的 "Lv50" */
 
     /* ---- 统计（自检与调优用）---- */
     uint32_t  log_advances;   /* OK 推进日志的条数 */

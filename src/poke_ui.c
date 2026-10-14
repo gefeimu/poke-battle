@@ -78,6 +78,13 @@
 #define HB_NUM_DY       28     /* 仅我方框有数字行 */
 #define HP_ROW_H        10     /* 含嵌入的 HP 标签；彩色填充实占 6px */
 #define HP_LABEL_GAP    6      /* 标签右边到填充的间距 */
+#define HB_ME_X         (UI_SCREEN_W - HB_ME_W - HB_INSET)
+#define HB_ME_Y         110    /* 我方框贴下半屏上方；提出常量只为去字面量 */
+
+/* 我方携带道具名：画在血条框 HP 数字行的**左侧**（数字是右对齐的，
+ * 两者不会撞在一起），用血条框字号（12px）。 */
+#define MY_ITEM_X       (HB_ME_X + 8)
+#define MY_ITEM_DY      HB_NUM_DY
 
 /* 场景 */
 #define HORIZON         84
@@ -85,6 +92,17 @@
 #define FOE_Y           22
 #define ME_X            10
 #define ME_Y            70
+
+/*
+ * 天气胶囊：画在**画面右上角**并右对齐（不是水平居中）——
+ * 左上角被对手血条框（y ≤ 34）占着，右上角对手立绘从 y=22 起，
+ * y 4..20 这一条正好是空的，放这里不压任何东西。
+ */
+#define WX_BADGE_Y      4
+#define WX_BADGE_H      16
+#define WX_BADGE_PAD_X  6
+#define WX_BADGE_R      5
+#define WX_BADGE_RIGHT  4
 
 /* 下半屏 */
 #define DLG_X           4
@@ -153,6 +171,19 @@ _Static_assert(UI_STATUS_HINT_W == STATUS_W - (STATUS_TEXT_X - STATUS_X) - 10,
                                                 * 否则选中时文字会横向跳一下） */
 #define MENU_NOTE_R      20                    /* 行右侧小字离板右边 */
 #define MENU_TRI_DX      6                     /* 光标三角 x 相对板左边 */
+
+/* ---- 带图标的行（队伍配置 / 选择队伍 / 换人）----
+ * 全部按「板内相对坐标」定义，与 MENU_TEXT_DX / MENU_NOTE_R 同一坐标系。
+ * 行高 37 时：图标 32 高上下各留 2、名字在第一行、等级/HP 数字在第二行。 */
+#define MENU_ICON_DX       8     /* 行首图标离板左边（绝对 12，图标 12..44） */
+#define MENU_ICON_DY       2     /* 图标在行高 37 里竖直居中：(37-32)/2 */
+#define MENU_ICON_TEXT_DX  46    /* 有图标的行，文字右移到这里（绝对 50） */
+#define MENU_SUB_DY        20    /* 第二行（等级 / cur/max）相对行顶的偏移 */
+#define MENU_HPBAR_X       126   /* HP 条离板左边（绝对 130；板宽 232，条 130..204） */
+#define MENU_HPBAR_W       74
+#define MENU_HPBAR_H       8
+#define MENU_HPBAR_R       4
+#define MENU_HPBAR_DY      4     /* HP 条相对行顶（y+4..12），与第二行 y+20 错开 */
 
 #define MENU_BAR_X       (MENU_BOX_X + MENU_BOX_W - 9)
 #define MENU_BAR_W       5
@@ -305,6 +336,40 @@ static void hp_row(Surface *s, const UiFonts *f, int x, int y, int w, int h,
     }
 }
 
+/*
+ * 列表行里的小 HP 条。**不带「HP」标签**：换人列表一行只有 8px 高，
+ * 塞不下标签，分档配色与战斗界面同一套（绿 >50% / 黄 >20% / 红）。
+ * 填充画法与 hp_row() 完全一致 —— 两个条挨在同一屏上时观感才统一。
+ */
+static void menu_hpbar(Surface *s, int x, int y, int w, int h, int ratio_permil)
+{
+    uint16_t hi, lo;
+    hp_colors(ratio_permil, &hi, &lo);
+    r_round_rect(s, x, y, w, h, h / 2, C_BAR_TRACK);
+
+    /* 无标签时 fx = x + 2（与 hp_row 的 fx 同一算法），右端留 4px */
+    int inner_w = (x + w - 4) - (x + 2);
+    if (inner_w < 5) {
+        return;
+    }
+    int fill_w = (inner_w * ratio_permil + 500) / 1000;
+    if (fill_w > inner_w) {
+        fill_w = inner_w;
+    }
+    if (fill_w < 5) {
+        return;
+    }
+
+    r_round_rect(s, x + 2, y + 2, fill_w, h - 4, (h - 4) / 2, lo);
+    if (fill_w > 7) {
+        int hi_h = (h - 4 + 1) / 2;
+        if (hi_h < 1) {
+            hi_h = 1;
+        }
+        r_fill_rect(s, x + 2, y + 2, fill_w - 4, hi_h, hi);
+    }
+}
+
 /* ================================================================ 对外 */
 
 void ui_dialog(Surface *s, int x, int y, int w, int h, int radius)
@@ -345,6 +410,24 @@ void ui_healthbox(Surface *s, const UiFonts *f, int x, int y, int w, int h,
     }
 }
 
+/* 右上角天气胶囊：宽 = 文字宽 + 两倍内边距，整体右对齐贴边。 */
+static void wx_badge(Surface *s, const UiFonts *f, const char *text)
+{
+    if (!text || !f || !f->dialog) {
+        return;                 /* 无天气就不画：不占位、不遮天空 */
+    }
+    int tw = r_text_width(f->dialog, text);
+    int w  = tw + WX_BADGE_PAD_X * 2;
+    int x  = UI_SCREEN_W - WX_BADGE_RIGHT - w;
+    r_round_rect(s, x, WX_BADGE_Y, w, WX_BADGE_H, WX_BADGE_R, C_HB_EDGE);
+    r_round_rect(s, x + 1, WX_BADGE_Y + 1, w - 2, WX_BADGE_H - 2,
+                 WX_BADGE_R - 1, C_HB_FILL);
+    /* 文字竖直居中：16px 字库 line_height=21，居中会算出 ty = 4 + (16-21)/2 = 2，
+     * 实际墨迹落在 6..18 之间，正好在胶囊 4..20 内。 */
+    int ty = WX_BADGE_Y + (WX_BADGE_H - (int)f->dialog->line_height) / 2;
+    r_text(s, x + WX_BADGE_PAD_X, ty, f->dialog, text, C_HB_TEXT);
+}
+
 void ui_battle_screen(Surface *s, const UiFonts *f, const BattleScreen *d)
 {
     if (!s || !f || !d) {
@@ -378,8 +461,17 @@ void ui_battle_screen(Surface *s, const UiFonts *f, const BattleScreen *d)
     /* ---- 两个血条框：对角摆放，离屏幕边留 2px ---- */
     ui_healthbox(s, f, HB_INSET, HB_INSET, HB_FOE_W, HB_FOE_H,
                  d->foe_name, d->foe_lv, d->foe_hp_permil, NULL);
-    ui_healthbox(s, f, UI_SCREEN_W - HB_ME_W - HB_INSET, 110, HB_ME_W, HB_ME_H,
+    ui_healthbox(s, f, HB_ME_X, HB_ME_Y, HB_ME_W, HB_ME_H,
                  d->me_name, d->me_lv, d->me_hp_permil, d->me_hp_text);
+
+    /* 我方携带道具名：HP 数字行左侧（数字右对齐，故不重叠）。无道具不画。 */
+    if (d->my_item && f->box) {
+        r_text(s, MY_ITEM_X, HB_ME_Y + MY_ITEM_DY, f->box, d->my_item,
+               C_HB_TEXT);
+    }
+
+    /* 右上角天气标志：有天气才画。 */
+    wx_badge(s, f, d->wx_text);
 
     /* ---- 对话框（战斗日志）---- */
     ui_dialog(s, DLG_X, DLG_Y, DLG_W, DLG_H, 6);
@@ -439,6 +531,13 @@ void ui_battle_screen(Surface *s, const UiFonts *f, const BattleScreen *d)
             r_text(s, STATUS_TEXT_X, STATUS_Y + 4, f->dialog,
                    d->status_right, C_DLG_TEXT);
         }
+    }
+
+    /* 等玩家推进日志时的旋转动效。wait_anim 0 = 不画（自动推进中/非日志阶段）。 */
+    if (d->wait_anim >= 1 && d->wait_anim <= 4 && f->dialog) {
+        static const char *const kWaitFrames[4] = {"/", "-", "\\", "|"};
+        r_text(s, STATUS_TEXT_X - 20, STATUS_Y + 4, f->dialog,
+               kWaitFrames[d->wait_anim - 1], C_DLG_GOLD);
     }
 }
 
@@ -516,19 +615,42 @@ static void menu_list(Surface *s, const UiFonts *f, const MenuBox *b,
             }
         }
 
+        /* 行首 32x32 图标：按原生尺寸绘制、不缩放，索引 0 透明不落笔。
+         * 放在文字之前，且不受「有没有字体」影响（图标与字体无关）。 */
+        if (m->row_icons[i]) {
+            r_sprite(s, b->x + MENU_ICON_DX, y + MENU_ICON_DY,
+                     m->row_icons[i]);
+        }
+
         if (!f || !f->dialog) {
             continue;
         }
         int ty = y + row_text_dy(f->dialog, b->row_h);
         /* 选中与否文字 x **一样**：变了的话选中时整行文字会横跳一下，
-         * 看着像画面抖了。 */
+         * 看着像画面抖了。只有有图标的行才右移让位。 */
+        int text_dx = m->row_icons[i] ? MENU_ICON_TEXT_DX : MENU_TEXT_DX;
         if (m->items[i]) {
-            r_text(s, b->x + MENU_TEXT_DX, ty, f->dialog, m->items[i],
+            r_text(s, b->x + text_dx, ty, f->dialog, m->items[i],
                    C_DLG_TEXT);
         }
+        /* 第二行（换人行的等级）：与主文字同一 x，字号小一档。 */
+        if (m->subs[i] && f->box) {
+            r_text(s, b->x + text_dx, y + MENU_SUB_DY, f->box, m->subs[i],
+                   C_DLG_TEXT);
+        }
+        /* HP 条：**> 0 才画**（哨兵 0 = 这个屏没有血条）。与战斗界面同一套分档。 */
+        if (m->row_hp_permil[i] > 0) {
+            menu_hpbar(s, b->x + MENU_HPBAR_X, y + MENU_HPBAR_DY,
+                       MENU_HPBAR_W, MENU_HPBAR_H, m->row_hp_permil[i]);
+        }
         if (m->notes[i]) {
-            int nw = r_text_width(f->dialog, m->notes[i]);
-            r_text(s, b->x + b->w - b->note_r - nw, ty, f->dialog,
+            /* 有第二行的行（换人），cur/max 跟它同处第二行、同用 12px 字并
+             * 右对齐；其余屏的 notes 仍落在主文字那一行（版式与从前一致）。 */
+            bool on_sub = (m->subs[i] && f->box);
+            const BitmapFont *nf = on_sub ? f->box : f->dialog;
+            int ny = on_sub ? y + MENU_SUB_DY : ty;
+            int nw = r_text_width(nf, m->notes[i]);
+            r_text(s, b->x + b->w - b->note_r - nw, ny, nf,
                    m->notes[i], sel ? C_DLG_GOLD : C_NOTE_TEXT);
         }
     }
@@ -637,17 +759,20 @@ void ui_menu_screen(Surface *s, const UiFonts *f, const MenuScreen *m)
     if (m->big) {
         menu_big(s, f, m);
     } else {
-        /* 板高随内容长：主菜单两项就矮矮一块，队伍配置撑到 8 行。
-         * 固定画到 8 行高会让主菜单下面空一大片，看着像有内容没画出来。 */
+        /* 板高随内容长：主菜单两项就矮矮一块，队伍配置撑到 6 行。
+         * 固定画到 8 行高会让主菜单下面空一大片，看着像有内容没画出来。
+         * 行高按屏取：图标屏 37、无图标屏仍是 28（row_h=0 → 默认）。 */
         int shown = menu_shown(m);
         if (shown < 1) {
             shown = 1;      /* 一项都没有也画个空板：屏幕上只剩背景像渲染坏了 */
         }
-        int box_h = MENU_BOX_PAD_Y * 2 + shown * MENU_ROW_H;
+        int row_h = m->row_h > 0 ? m->row_h : MENU_ROW_H;
+        int hl_h  = row_h - 2;      /* 与 MENU_HL_H 同样的「上下各让 1px」 */
+        int box_h = MENU_BOX_PAD_Y * 2 + shown * row_h;
         ui_dialog(s, MENU_BOX_X, MENU_BOX_Y, MENU_BOX_W, box_h, MENU_BOX_R);
 
         MenuBox b = { MENU_BOX_X, MENU_BOX_Y + MENU_BOX_PAD_Y, MENU_BOX_W,
-                      MENU_ROW_H, MENU_HL_H, MENU_NOTE_R };
+                      row_h, hl_h, MENU_NOTE_R };
         menu_list(s, f, &b, m);
         menu_scrollbar(s, m, MENU_BOX_Y + MENU_BAR_PAD + 3,
                        box_h - (MENU_BAR_PAD + 3) * 2);

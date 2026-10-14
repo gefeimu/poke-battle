@@ -182,13 +182,14 @@ static int check_screen_charset(const BattleScreen *bs, const MenuScreen *ms)
     int nb = 0, nd = 0;
 
     if (bs) {
-        /* 12px：血条框里的名字 / 等级 / 血量 */
+        /* 12px：血条框里的名字 / 等级 / 血量 / 携带道具名 */
         box[nb++] = bs->me_name;
         box[nb++] = bs->foe_name;
         box[nb++] = bs->me_lv;
         box[nb++] = bs->foe_lv;
         box[nb++] = bs->me_hp_text;
-        /* 16px：日志、招式菜单、状态行 */
+        box[nb++] = bs->my_item;      /* 道具名用血条框字号（12px）画 */
+        /* 16px：日志、招式菜单、状态行、天气胶囊 */
         dlg[nd++] = bs->log[0];
         dlg[nd++] = bs->log[1];
         for (int i = 0; i < 4; i++) {
@@ -197,6 +198,7 @@ static int check_screen_charset(const BattleScreen *bs, const MenuScreen *ms)
         }
         dlg[nd++] = bs->status_left;
         dlg[nd++] = bs->status_right;
+        dlg[nd++] = bs->wx_text;      /* 天气胶囊用对话框字号（16px）画 */
     }
     if (ms) {
         box[nb++] = ms->title;    /* 弹层的标题用 12px 画（框内一行） */
@@ -345,6 +347,12 @@ static int build_hero(BattleScreen *d)
         d->move_pp[i] = pp[i];
     }
     d->selected = 0;
+
+    /* 右上角天气胶囊与我方框里的携带道具名：hero 图要把这两个 HUD 元素
+     * 也画出来。wait_anim 设 0 —— hero 是静止示意图，不画等待动效。 */
+    d->wx_text = "晴";
+    d->my_item = "木炭";
+    d->wait_anim = 0;
 
     /* 状态行右侧用**状态机里那条真实提示**，不再写一句手造的
      * 「选择招式   换人   认输」—— 那句话在固件里不存在，图却在 README 上
