@@ -446,6 +446,28 @@ def make_hero(f_ui, f_lvgl, f_hp, sprites, names, scale):
               names["charizard"], "Lv50", 0.44, hp_text="68/153",
               label_font=f_hp)
 
+    # ---- 我方携带道具（纯文字，无图标）：HP 数字行左侧 ----
+    # 与 src/poke_ui.c 同值：MY_ITEM_X = (SCREEN_W - 128 - HP_INSET) + 8 = 118，
+    # MY_ITEM_DY = NUM_ROW_DY = 28 → y = 110 + 28 = 138。与右对齐的 HP 数字不重叠。
+    f_ui.draw(img, SCREEN_W - 128 - HP_INSET + 8, 110 + NUM_ROW_DY, "木炭", HB_TEXT)
+
+    # ---- 天气胶囊（画面右上角、右对齐）----
+    WX_BADGE_Y, WX_BADGE_H = 4, 16
+    WX_BADGE_PAD_X, WX_BADGE_R, WX_BADGE_RIGHT = 6, 5, 4
+    wx_w = f_lvgl.measure("晴") + WX_BADGE_PAD_X * 2
+    wx_x = SCREEN_W - WX_BADGE_RIGHT - wx_w
+    d.rounded_rectangle([wx_x, WX_BADGE_Y,
+                         wx_x + wx_w - 1, WX_BADGE_Y + WX_BADGE_H - 1],
+                        radius=WX_BADGE_R, fill=HB_EDGE)
+    d.rounded_rectangle([wx_x + 1, WX_BADGE_Y + 1,
+                         wx_x + wx_w - 2, WX_BADGE_Y + WX_BADGE_H - 2],
+                        radius=WX_BADGE_R - 1, fill=HB_FILL)
+    # 文字竖直居中。注意 C 侧是 int 截断除法：(16-21)/2 = -2；Python 的 //
+    # 是下取整会得 -3，差 1px。所以必须用 int() 截断，不能写 //。
+    f_lvgl.draw(img, wx_x + WX_BADGE_PAD_X,
+                WX_BADGE_Y + int((WX_BADGE_H - f_lvgl.line_height) / 2),
+                "晴", HB_TEXT)
+
     # ---- 下半屏：对话框 + 招式菜单 + 状态行 ----
     # 日志框
     dialog(d, 4, 164, 232, 52)
@@ -590,6 +612,7 @@ def main():
     # 出自 tools/gen_font.py 的 UI_STRINGS。写错一个字就硬失败。
     hero_strings = [
         "巨金怪", "喷火龙", "Lv50", "HP", "68/153",
+        "木炭", "晴",
         "喷火龙 使用了 喷射火焰！", "会心一击！造成了 187 点伤害",
         "喷射火焰", "龙爪", "翅膀攻击", "剑舞",
         "15/15", "35/35", "20/20",
@@ -597,7 +620,8 @@ def main():
     ]
     # 血条框那句用 12px 那套校验，对话框用 16px，各自独立
     box_strings = [s for s in hero_strings
-                   if s in ("巨金怪", "喷火龙", "Lv50", "68/153", "HP")]
+                   if s in ("巨金怪", "喷火龙", "Lv50", "68/153", "HP",
+                            "木炭")]
     n_box = check_charset(f_ui, box_strings, "hero.png 血条框（12px）")
     check_charset(f_hp, ["HP"], "hero.png HP 标签（10px）")
     n_dlg = check_charset(f_lvgl, [s for s in hero_strings if s not in box_strings],
