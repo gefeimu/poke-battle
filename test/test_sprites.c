@@ -21,6 +21,7 @@
 #include <string.h>
 
 #include "poke_species.h"
+#include "poke_icons.h"
 #include "poke_sprites.h"
 
 static int g_pass = 0, g_fail = 0;
@@ -220,6 +221,65 @@ int main(void)
         }
     }
     check(pal_bad == 0, "全部图都带调色板，缺失 %d 张", pal_bad);
+
+    /* ---------- 7. 图标表（32x32 队伍小图标） ---------- */
+    /*
+     * 图标是独立的 kIconTable（不复用 kSpriteTable、不影响 SPRITE_COUNT）。
+     * 这里只盯图标自身：张数、尺寸、覆盖 1..386、越界返回 NULL、
+     * 像素非空，以及 id 是否严格递增（表损坏会在这里暴露）。
+     */
+    printf("\n[图标] 32x32 队伍小图标表\n");
+    check(ICON_COUNT == 386, "ICON_COUNT == 386（实际 %d）", ICON_COUNT);
+
+    int icon_missing = 0, icon_badsize = 0;
+    for (uint16_t pid = 1; pid <= 386; pid++) {
+        const SpriteEntry *e = icon_get(pid);
+        if (!e) {
+            icon_missing++;
+        } else if (e->w != 32 || e->h != 32) {
+            icon_badsize++;
+        }
+    }
+    check(icon_missing == 0, "386 个 pid 全部查得到图标，缺 %d 个", icon_missing);
+    check(icon_badsize == 0, "全部图标尺寸都是 32x32，尺寸不对 %d 个", icon_badsize);
+
+    check(icon_get(0) == NULL, "icon_get(0) 返回 NULL");
+    check(icon_get(387) == NULL, "icon_get(387) 返回 NULL");
+    check(icon_get(9999) == NULL, "icon_get(9999) 返回 NULL");
+
+    /* 抽样若干图标：像素数据里既要有非透明像素，也不能整张不透明 */
+    static const uint16_t sample[] = { 1, 25, 386 };
+    int sample_bad = 0;
+    for (unsigned k = 0; k < sizeof(sample) / sizeof(sample[0]); k++) {
+        const SpriteEntry *e = icon_get(sample[k]);
+        if (!e) {
+            sample_bad++;
+            continue;
+        }
+        int opaque = 0;
+        for (int i = 0; i < 32 * 32; i++) {
+            if (px4bpp(e, i)) {
+                opaque++;
+            }
+        }
+        if (opaque == 0 || opaque == 32 * 32) {
+            sample_bad++;
+        }
+    }
+    check(sample_bad == 0, "抽样图标（1/25/386）像素非空且非全不透明，异常 %d 个",
+          sample_bad);
+
+    /* id 严格递增，且首尾分别是 1 与 386 */
+    int order_ok = 1;
+    for (int i = 1; i < ICON_COUNT; i++) {
+        if (kIconTable[i].id != kIconTable[i - 1].id + 1) {
+            order_ok = 0;
+        }
+    }
+    check(order_ok, "kIconTable 的 id 严格递增");
+    check(kIconTable[0].id == 1, "首项 id == 1（实际 %u）", kIconTable[0].id);
+    check(kIconTable[ICON_COUNT - 1].id == 386, "末项 id == 386（实际 %u）",
+          kIconTable[ICON_COUNT - 1].id);
 
     printf("\n=== 结果: %d 通过, %d 失败 ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;

@@ -10,6 +10,7 @@
 #   make bench-teams  多队伍 AI 对战基准（档位矩阵 / 队伍风格矩阵 / 大样本胜率）
 #   make types      重新生成属性克制表（改克制关系后必须跑）
 #   make sprites         重新生成精灵图（需指定 SPRITES_SRC 源图目录）
+#   make icons           重新生成 32x32 队伍小图标（需指定 ICONS_SRC 源图目录）
 #   make sprites-preview 把固件里的精灵图导成 PNG 肉眼检查画质
 #   make font            重新生成自制 1bpp 字库（需指定 FONT 字体路径）
 #   make lvgl-font       重新生成 LVGL 4bpp 字库（需指定 FONT 字体路径）
@@ -45,7 +46,8 @@ SRC_AI = $(SRC) src/poke_ai.c
 # 渲染层：**不依赖战斗引擎**，只吃精灵图数据与字体数据。
 # 所以渲染相关的测试/工具都能单独编译、单独跑。
 RENDER_SRC = src/poke_render.c src/poke_font.c src/poke_ui.c \
-             gen/poke_font_data.c gen/poke_sprites.c gen/poke_species.c
+             gen/poke_font_data.c gen/poke_sprites.c gen/poke_species.c \
+             gen/poke_icons.c
 
 # 输入层与界面状态机：既不吃引擎，也不吃渲染层 —— 上游只有按键事件。
 # 这两个是唯一「跑一遍不到一毫秒」的测试，改完随手就能重跑。
@@ -57,7 +59,7 @@ UI_SRC    = src/poke_input.c src/poke_ui_state.c
 # 注意这里**没有**渲染层：会话只吐 BattleScreen / MenuScreen（纯数据），
 # 不画像素。
 SESSION_SRC = src/poke_session.c src/poke_ui_state.c src/poke_input.c \
-              src/poke_font.c
+              src/poke_font.c gen/poke_icons.c
 
 # 屏幕导出工具要的是**整条链路**：引擎 + AI + 会话 + 渲染层。
 # **不能直接拼 $(SRC_AI) $(SESSION_SRC) $(RENDER_SRC)** —— 三份名单里有
@@ -70,13 +72,15 @@ SCREEN_SRC = src/poke_battle.c src/poke_ability.c src/poke_item.c \
              src/poke_font.c src/poke_ui.c \
              gen/poke_abilities.c gen/poke_items.c gen/poke_moves.c \
              gen/poke_species.c gen/poke_types.c gen/poke_natures.c \
-             gen/poke_learnsets.c gen/poke_sprites.c gen/poke_font_data.c
+             gen/poke_learnsets.c gen/poke_sprites.c gen/poke_icons.c \
+             gen/poke_font_data.c
 
 BUILD = build
 TESTS = data_selfcheck test_calc test_battle test_ai test_sprites test_font \
         test_render test_input test_ui test_session
 
-.PHONY: all test check-consistency bench bench-teams types stat-golden sprites sprites-preview \
+.PHONY: all test check-consistency bench bench-teams types stat-golden sprites icons \
+        sprites-preview \
         font lvgl-font lvgl-font-to-c font-preview readme-images \
         screen-preview render-compare play play-check clean
 
@@ -105,8 +109,10 @@ $(BUILD)/test_ai: test/test_ai.c $(ARENA_HDR) $(SRC_AI) | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) $(TESTFLAGS) -o $@ $< $(SRC_AI)
 
 # 精灵图自检只依赖图片数据，不链接战斗引擎
-$(BUILD)/test_sprites: test/test_sprites.c gen/poke_sprites.c gen/poke_species.c | $(BUILD)
-	$(CC) $(CFLAGS) $(INC) -o $@ $< gen/poke_sprites.c gen/poke_species.c
+$(BUILD)/test_sprites: test/test_sprites.c gen/poke_sprites.c gen/poke_species.c \
+                       gen/poke_icons.c | $(BUILD)
+	$(CC) $(CFLAGS) $(INC) -o $@ $< gen/poke_sprites.c gen/poke_species.c \
+	      gen/poke_icons.c
 
 # 字库自检要读六张中文名表，所以链接全部数据表（不链接引擎）
 FONT_DATA = gen/font_cn.c gen/poke_species.c gen/poke_moves.c gen/poke_types.c \
@@ -280,6 +286,13 @@ sprites:
 	@test -n "$(SPRITES_SRC)" || \
 	  (echo "用法: make sprites SPRITES_SRC=<sprites仓库>/sprites/pokemon/versions"; exit 1)
 	python tools/build_sprites_c.py --src $(SPRITES_SRC) --gen3 firered-leafgreen
+
+# ICONS_SRC 在命令行给，例如：
+#   make icons ICONS_SRC=/d/Download/Chromedownload/sprites/sprites/pokemon/versions
+icons:
+	@test -n "$(ICONS_SRC)" || \
+	  (echo "用法: make icons ICONS_SRC=<sprites仓库>/sprites/pokemon/versions"; exit 1)
+	python tools/build_icons_c.py --src $(ICONS_SRC)
 
 clean:
 	@rm -rf $(BUILD)

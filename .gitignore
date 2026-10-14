@@ -23,6 +23,9 @@ data/fonts/
 # ---- 可再生的中间产物 ----
 # 量化后的 PNG（精灵图的中间产物，最终产物是 gen/poke_sprites.c）
 data/sprites_4bpp/
+# 宝可梦小图标量化后的 PNG（中间产物，最终产物是 gen/poke_icons.c）
+data/icons_4bpp/
+data/icons_raw/
 # 预览图（make sprites-preview / make font-preview / make readme-images 的输出）
 data/sprites_preview/
 data/font_preview/
