@@ -690,6 +690,16 @@ static int do_move(Battle *b, int attacker_is_foe)
         log_add(&b->log, "造成了 %u 点伤害", total);
     }
 
+    /* 被打倒要单独报一句。
+     *
+     * 不报的话日志里只有「造成了 N 点伤害」，玩家根本看不出这一击把人打没了
+     * —— 下一次提到它已经是**下一批**日志的「收回了 X，派出了 Y」。会话层
+     * 也靠这句「倒下了」把日志播放在被击倒处停下来等玩家按一次确定
+     * （见 poke_session.c 的 log_is_ko()），所以这句是功能性的，不只是文案。 */
+    if (!def->alive) {
+        log_add(&b->log, "%s 的 %s 倒下了！", def_side->name, mon_name(def));
+    }
+
     /* ---- 效果分派（在伤害之后） ---- */
     if (def->alive) {
         apply_move_effects(b, attacker_is_foe, mv, total);

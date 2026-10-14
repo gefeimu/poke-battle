@@ -296,6 +296,27 @@ static void finish_log(Session *s)
 }
 
 /*
+ * 「被击倒」的日志行。
+ *
+ * 这一类**不自动放过去**：停在原地等玩家按一次确定，由他自己决定什么时候
+ * 翻过这一页（要不要换人、要不要看清是谁倒下的）。和「多停一拍的自动关键行」
+ * 是两码事，所以单独一个谓词，不混进 log_dwell_for 的关键字表。
+ *
+ * **引擎里每一条「报死亡」的文案都必须命中这里的关键字**（现在这几种：
+ * 被招式打死「… 倒下了！」、异常状态掉死「因 … 倒下了！」、混乱自伤
+ * 「… 倒下了！」、道具反噬「被 … 反噬，倒下了！」、寄生种子吸干
+ * 「被寄生种子吸干了！」）。以后新增死亡文案，这里要跟着加，否则那一种
+ * 倒下就不会停下来等玩家。
+ *
+ * strstr 是逐字节匹配 UTF-8 —— 正是想要的：这些词都是完整词，不会落在
+ * 多字节字符中间，所以子串匹配等价于词匹配。
+ */
+static bool log_is_ko(const char *t)
+{
+    return t && (strstr(t, "倒下") || strstr(t, "濒死") || strstr(t, "吸干了"));
+}
+
+/*
  * 开始播放「引擎新写的那几条日志」。
  *
  * log_next 是绝对序号，指向第一条还没显示的；log_end 是本次播放的终点。
@@ -308,14 +329,11 @@ static void begin_log(Session *s)
         finish_log(s);   /* 没有新日志：直接决定下一步（护栏触发时就是这样） */
         return;
     }
-    /* 只有开场那一批（log_next == 0）自动推进；回合中的日志仍要玩家
-     * 一条条按。开场的计时状态在这里重置，出发点是「未计时」。 */
-    if (s->log_next == 0) {
-        s->log_auto = true;
-        s->log_at_for = SES_LOG_AT_NONE;
-    } else {
-        s->log_auto = false;
-    }
+    /* 整场对战的日志都自动推进（开场与回合内一视同仁）：玩家的手只用来出招，
+     * 不用一条条按确定。只有「被击倒」那一行停下来等一次确定 —— 见 log_is_ko()。
+     * 计时状态在这里重置，出发点是「未计时」。 */
+    s->log_auto = !log_is_ko(ses_log_at(s, s->log_next));
+    s->log_at_for = SES_LOG_AT_NONE;
     s->phase = SES_PHASE_LOG;
 }
 
@@ -334,9 +352,10 @@ static void log_step(Session *s, uint32_t n)
 }
 
 /*
- * 当前这条日志该停多久。
+ * 当前这条日志该停多久（只对「会自动放过去」的行有意义）。
  *
- * 关键事件（天气/特性触发/威吓/倒下…）多停一拍，让玩家看清发生了什么。
+ * 关键事件（天气/特性触发/起作用/威吓）多停一拍，让玩家看清发生了什么。
+ * 「被击倒」的行不走这里 —— 它们由 log_is_ko() 管，停在原地等按键。
  * strstr 是逐字节匹配 UTF-8 —— 正是想要的：这些关键字都是完整词，
  * 不会落在多字节字符中间，所以子串匹配等价于词匹配。
  */
@@ -346,7 +365,7 @@ static uint32_t log_dwell_for(const Session *s)
     if (!t) {
         return SES_LOG_DWELL_MS;
     }
-    static const char *const kKey[] = {"天气", "特性", "起作用", "威吓", "倒下", "濒死"};
+    static const char *const kKey[] = {"天气", "特性", "起作用", "威吓"};
     for (unsigned i = 0; i < sizeof(kKey) / sizeof(kKey[0]); i++) {
         if (strstr(t, kKey[i])) {
             return SES_LOG_DWELL_KEY_MS;
@@ -356,7 +375,7 @@ static uint32_t log_dwell_for(const Session *s)
 }
 
 /*
- * 开场日志的受控自动推进：无按键时按停留时长逐条前进。
+ * 日志的受控自动推进：无按键时按停留时长逐条前进，直到遇上「被击倒」的行。
  *
  * 惰性起表：只有「本条真正成为当前条」之后才开始计时，这样中途被暂停
  * （key_down）或手动推进都不会把上一条的剩余时间带过来。
@@ -364,7 +383,14 @@ static uint32_t log_dwell_for(const Session *s)
 static void ses_log_tick(Session *s, uint32_t now_ms)
 {
     if (!s->log_auto) {
-        return;                 /* 回合中/已被长按取消：只等手动推进 */
+        return;                 /* 停在「被击倒」行/已被长按取消：只等手动推进 */
+    }
+    if (log_is_ko(ses_log_at(s, s->log_next))) {
+        /* 被击倒：停下等玩家按一次确定。翻成 false 之后，状态行的等待动效
+         * 与「确定   长按跳过」提示会自动跟着出来（见 ses_view）。 */
+        s->log_auto = false;
+        s->log_at_for = SES_LOG_AT_NONE;
+        return;
     }
     if (s->key_down) {
         s->log_at_for = SES_LOG_AT_NONE;   /* 按住暂停；松开后重新计时 */
@@ -654,7 +680,7 @@ void ses_feed(Session *s, const KeyMsg *msg, uint32_t now_ms)
         return;
     }
 
-    /* 维护「是否有键按着」：按住 = 暂停开场日志的自动推进。
+    /* 维护「是否有键按着」：按住 = 暂停日志的自动推进。
      * 放在 swallow 分支之前，是因为长按跳过（LONG）之后 key_down 可能
      * 还没被 RELEASE 清掉，先维护更贴近真实电平。
      * **不能用 key_is_down()** —— 单测直接投事件、不走 key_poll，拿不到
@@ -689,10 +715,15 @@ void ses_feed(Session *s, const KeyMsg *msg, uint32_t now_ms)
             return;
         }
         if (msg->ev == KEY_EV_CLICK) {
-            log_step(s, 1);
-            /* 重置本条计时：**保持 log_auto 不变** —— 玩家手动按一下
-             * 只是提前放，不该顺手把自动推进关掉。 */
             s->log_at_for = SES_LOG_AT_NONE;
+            log_step(s, 1);
+            /* 每条都自动推进，手动按一下只是提前放 —— 所以放完这一条要重新
+             * 起表（log_auto 恢复）。若新的一条又是「被击倒」，tick 会立刻再
+             * 把它停下；若这一条已经是本批最后一条，log_step 已经离开日志
+             * 阶段，就不用（也不该）再置了。 */
+            if (s->phase == SES_PHASE_LOG) {
+                s->log_auto = !log_is_ko(ses_log_at(s, s->log_next));
+            }
         } else if (msg->ev == KEY_EV_LONG) {
             s->log_auto = false;   /* 长按 = 取消自动，剩余日志全跳过 */
             s->swallow_key = (int8_t)KEY_OK;
@@ -935,7 +966,9 @@ void ses_view(Session *s, BattleScreen *out)
     case SES_PHASE_LOG:
         /* 播放日志时左侧报回合数：日志刷得太快，用户需要知道打到第几回合了。
          * 去空格是为了给状态行动效腾位置（3 位数时 61px + 起点 14 止于 75，
-         * 动效画在 x=80）。 */
+         * 动效画在 x=80）。
+         * 右侧只在「停下等按键」时才提示要按 —— 也就是播到「被击倒」那一行
+         * （log_auto 被 tick 翻成 false）；其余时间都在自动往下走。 */
         snprintf(s->status_left, sizeof(s->status_left), "第%u回合",
                  (unsigned)s->b.turn);
         snprintf(s->status_right, sizeof(s->status_right), "%s",

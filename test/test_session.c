@@ -701,13 +701,13 @@ static void test_log_skip_and_swallow(void)
 }
 
 /*
- * 开场日志的**受控自动推进**：不投任何键，光靠时间就能一条条放完。
+ * 日志的**受控自动推进**：不投任何键，光靠时间就能一条条放完。
  *
- * 这是本轮新增的行为，所以用例分四段互相独立地钉住它的四条契约：
  *   1. 无按键时按停留时长自动前进，≤5000ms 走完开场；
  *   2. 按住任一键暂停，松开后重新计时继续；
  *   3. 单次短按只前进一条，**不把自动推进关掉**；
  *   4. 长按取消自动并一次跳到末尾（落在 INPUT）。
+ * 「被击倒」那一行不走自动（停下等按键）—— 那是 test_log_ko_pause 的活。
  * 四段用各自的 Rig，互不污染 —— 自动推进的计时状态藏在 Session 里，
  * 复用同一个 Rig 会让上一段的残留时间影响下一段。
  */
@@ -811,25 +811,96 @@ static void test_log_turn_status(void)
     check(v.wait_anim == 0, "自动推进时不画等待动效（wait_anim=%d）",
           v.wait_anim);
 
-    /* 回合中（手动推进）：左报回合、右报「确定 长按跳过」、画动效 1..4 */
+    /* 回合中（同样自动推进）：左报回合、右仍是「自动中…」、不画动效。
+     * 整场对战的日志都自动放，玩家的手只用来出招（「被击倒」那一行是例外，
+     * 由 test_log_ko_pause 专门钉住）。 */
     Rig t;
     rig_init(&t, AI_ROOKIE);
     start_battle(&t);      /* 手动把开场放完，到等输入 */
     ok_(&t);               /* 出招 → 进回合中的日志播放 */
     check(ses_phase(&t.s) == SES_PHASE_LOG, "出招后进日志播放（%s）",
           phase_name(ses_phase(&t.s)));
-    check(!t.s.log_auto, "回合中这批不是自动推进（log_auto=0）");
-    advance(&t, 250);      /* 走一两帧，让动效相位被 tick 更新 */
+    const char *first = ses_log_at(&t.s, t.s.log_next);
+    check(first && !strstr(first, "倒下") && !strstr(first, "濒死"),
+          "回合中这批的第一条不是「被击倒」行（「%s」）——"
+          "这条是断言「回合中自动推进」的前提",
+          first ? first : "(null)");
+    check(t.s.log_auto, "回合中这批也自动推进（log_auto=1）");
+    advance(&t, 250);      /* 走一两帧，确认自动推进没有把动效画出来 */
     ses_view(&t.s, &v);
     char want[24];
     snprintf(want, sizeof(want), "第%u回合", (unsigned)t.s.b.turn);
     check(v.status_left && strcmp(v.status_left, want) == 0, "回合中左侧 = %s",
           v.status_left ? v.status_left : "(null)");
-    check(v.status_right && strcmp(v.status_right, "确定   长按跳过") == 0,
-          "手动推进时右侧 = %s（不是「自动中…」）",
-          v.status_right ? v.status_right : "(null)");
-    check(v.wait_anim >= 1 && v.wait_anim <= 4,
-          "手动推进时画等待动效（wait_anim=%d，帧号 1..4）", v.wait_anim);
+    check(v.status_right && strcmp(v.status_right, "自动中…") == 0,
+          "回合中自动推进时右侧 = %s", v.status_right ? v.status_right : "(null)");
+    check(v.wait_anim == 0, "回合中自动推进时不画等待动效（wait_anim=%d）",
+          v.wait_anim);
+}
+
+/*
+ * 「被击倒」那一行要**停下来等一次确定** —— 这是「整场自动推进、只在被击倒时
+ * 才需要按」这条要求的例外口。
+ *
+ * 不做单点构造：倒下发生在哪一批、第几条，取决于引擎日志与抽签，写死了会随
+ * 任何一处改动假失败。这里一路打完（出招 + 推时间），**任何时刻看到当前条是
+ * 「被击倒」行就断言它停住了**，然后按一次确定、断言自动推进恢复。
+ */
+static void test_log_ko_pause(void)
+{
+    printf("\n[击倒暂停] 播到「倒下/濒死」停下等一次确定，按下后继续自动\n");
+
+    Rig r;
+    rig_init(&r, AI_ROOKIE);
+    start_battle(&r);              /* 开场（无击倒）自动放完，到等输入 */
+
+    int ko_seen = 0, resumed = 0;
+    /* 轮流「出招一次」或「推 2000ms 时间」，所以一句 6v6 大概一百多次循环
+     * （整局约 80 次按键，见 test_full_battle）。上限给足，防死循环。 */
+    for (int guard = 0; guard < 600 && ses_phase(&r.s) != SES_PHASE_RESULT;
+         guard++) {
+        SesPhase ph = ses_phase(&r.s);
+        if (ph == SES_PHASE_INPUT) {
+            ok_(&r);               /* 出招 / 换人列表选第 1 只 */
+            continue;
+        }
+        if (ph != SES_PHASE_LOG) {
+            break;                 /* 主菜单之类：收工 */
+        }
+        const char *cur = ses_log_at(&r.s, r.s.log_next);
+        if (cur && (strstr(cur, "倒下") || strstr(cur, "濒死"))) {
+            ko_seen++;
+            /* 停在原地：自动标记被关掉，状态行改口、动效出来 */
+            BattleScreen v;
+            ses_view(&r.s, &v);
+            check(!r.s.log_auto, "第 %d 次击倒：停在「%s」不再自动（log_auto=0）",
+                  ko_seen, cur);
+            check(v.status_right && strcmp(v.status_right, "确定   长按跳过") == 0,
+                  "第 %d 次击倒：右侧提示改成「%s」", ko_seen,
+                  v.status_right ? v.status_right : "(null)");
+            check(v.wait_anim >= 1 && v.wait_anim <= 4,
+                  "第 %d 次击倒：画出等待动效（wait_anim=%d）", ko_seen,
+                  v.wait_anim);
+            uint32_t at = r.s.log_next;
+            advance(&r, 4000);     /* 再等 4 秒也不许自己溜过去 */
+            check(r.s.log_next == at,
+                  "第 %d 次击倒：停住后等 4000ms 仍停在原地（%u）",
+                  ko_seen, r.s.log_next);
+            ok_(&r);               /* 按一次确定 → 放行 */
+            if (ses_phase(&r.s) == SES_PHASE_LOG &&
+                !(ses_log_at(&r.s, r.s.log_next) &&
+                  (strstr(ses_log_at(&r.s, r.s.log_next), "倒下") ||
+                   strstr(ses_log_at(&r.s, r.s.log_next), "濒死")))) {
+                check(r.s.log_auto, "第 %d 次击倒：按一下之后恢复自动推进", ko_seen);
+                resumed++;
+            }
+            continue;
+        }
+        advance(&r, 2000);         /* 不是击倒行：推时间，让它自己往下走 */
+    }
+
+    check(ko_seen > 0, "整局里至少遇到一次「被击倒」的停顿（%u 次）", ko_seen);
+    check(resumed > 0, "至少有一次按下后恢复自动推进（%u 次）", resumed);
 }
 
 /*
@@ -993,8 +1064,11 @@ static void test_view(void)
           phase_name(ses_phase(&r.s)));
     ses_view(&r.s, &v);
     check(v.selected == -1, "播放日志时不显示菜单高亮（%d）", v.selected);
-    check(v.status_right && strcmp(v.status_right, "确定   长按跳过") == 0,
-          "播放日志时右侧提示 = %s", v.status_right);
+    check(v.status_right &&
+          strcmp(v.status_right,
+                 r.s.log_auto ? "自动中…" : "确定   长按跳过") == 0,
+          "播放日志时右侧提示与实际状态一致（log_auto=%d，提示 = %s）",
+          (int)r.s.log_auto, v.status_right ? v.status_right : "(null)");
 
     /* 换人界面：行文字来自队伍数据。
      *
@@ -1635,6 +1709,7 @@ int main(void)
     test_log_skip_and_swallow();
     test_log_autoplay();
     test_log_turn_status();
+    test_log_ko_pause();
     test_battle_hud();
     test_switch_menu_rows();
     test_view();
