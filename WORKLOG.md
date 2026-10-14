@@ -78,10 +78,10 @@ git config --local --get user.email   # → baiguiyeyou@outlook.com
 | `test_calc` | 131 | `test_render` | 105 |
 | `test_battle` | 100 | `test_input` | 51 |
 | `test_ai` | 19 | `test_ui` | 125 |
-| `test_sprites` | 24 | `test_session` | 375 |
-| | | **合计** | **1065** |
+| `test_sprites` | 24 | `test_session` | 419 |
+| | | **合计** | **1109** |
 
-- `make test` → 1065 项全过，零编译警告
+- `make test` → 1109 项全过，零编译警告
 - `make check-consistency` → **17 组跨文件检查，0 处不一致**
 - `make play-check` → PC 试玩窗口无头自检 15/15
 
@@ -377,17 +377,20 @@ make lvgl-font FONT=data/fonts/SmileSans-Oblique.ttf   # 重新生成中文字�
 
 ## 10. 日志自动推进 / 战斗 HUD / 32×32 队伍小图标（2026-10-14 本轮）
 
-本轮目标：把「开场日志一条条自动放」做成**受玩家控制**的自动播放，给战斗界面
-补 **天气标志 + 我方道具标志**，再把新做的 **386 只 32×32 队伍小图标**接进
-选择队伍 / 队伍配置 / 换人三屏（换人页顺带挂上 HP 条）。
+本轮目标：把日志做成**整场自动播放**（只在「被击倒」那一行停下等一次确定），
+给战斗界面补 **天气标志 + 我方道具标志**，再把新做的 **386 只 32×32 队伍小图标**
+接进选择队伍 / 队伍配置 / 换人三屏（换人页顺带挂上 HP 条）。
 
 **行为**：
 
-- **日志受控自动推进**：战斗开始后逐条播放，普通行停 `SES_LOG_DWELL_MS`=1 秒，
-  关键行（日志含「天气/特性/起作用/威吓/倒下/濒死」之一）停 `SES_LOG_DWELL_KEY_MS`=1.5 秒。
-  按住任意键 = 暂停、松开 = 恢复；短按确定 = 前进一条；长按确定 = **取消自动播放并跳到本批末尾**。
-- **状态行**：等待手动推进时左侧画旋转动效（四帧 `/ - \ |`，每帧 `SES_WAIT_ANIM_MS`=125 ms）；
-  右侧文案自动播放中显示「自动中…」，等待推进时显示「确定   长按跳过」。
+- **日志整场自动推进**：开场与回合内**一视同仁**，逐条自己往下走 —— 玩家的手只用来
+  出招。普通行停 `SES_LOG_DWELL_MS`=1 秒，关键行（日志含「天气/特性/起作用/威吓」
+  之一）停 `SES_LOG_DWELL_KEY_MS`=1.5 秒。
+- **只有「被击倒」那一行会停下**（`log_is_ko()`：日志含「倒下/濒死/吸干了」），
+  等一次确定再继续自动播剩下的 —— 要不要看清是谁倒下、要不要接着换人，交给玩家。
+- 按住任意键 = 暂停、松开 = 恢复；短按确定 = 提前放一条；长按确定 = **取消自动播放并跳到本批末尾**。
+- **状态行**：停下等按键时左侧画旋转动效（四帧 `/ - \ |`，每帧 `SES_WAIT_ANIM_MS`=125 ms）；
+  右侧文案自动播放中显示「自动中…」，停下等按键时显示「确定   长按跳过」。
 - **天气胶囊**：右上角右对齐贴边，文字「晴/雨/沙/雹」；**无天气不画**。
 - **我方道具名**：**纯文字、无图标**，画在血条框 HP 数字行左侧（如「木炭」）；**无道具不画**。
 - **换人页**：每行「行首 32×32 图标 + 名字 + LvNN 小字 + 右侧 HP 条 + `cur/max`」；
@@ -399,7 +402,7 @@ make lvgl-font FONT=data/fonts/SmileSans-Oblique.ttf   # 重新生成中文字�
 | 常量 | 值 | 含义 |
 |---|---|---|
 | `SES_LOG_DWELL_MS` | 1000 | 普通日志行的自动停留时长（ms） |
-| `SES_LOG_DWELL_KEY_MS` | 1500 | 关键日志行多停一拍（天气/特性/起作用/威吓/倒下/濒死） |
+| `SES_LOG_DWELL_KEY_MS` | 1500 | 关键日志行多停一拍（天气/特性/起作用/威吓） |
 | `SES_WAIT_ANIM_MS` | 125 | 等待推进动效每帧毫秒（4 帧循环） |
 | `SES_LOG_AT_NONE` | `0xFFFFFFFF` | `log_at_for` 的「未计时」哨兵 |
 | `MENU_ROW_H_ICON` | 37 | 带图标的列表行高（默认行高 28） |
@@ -407,22 +410,23 @@ make lvgl-font FONT=data/fonts/SmileSans-Oblique.ttf   # 重新生成中文字�
 | `MY_ITEM_X` / `MY_ITEM_DY` | `HB_ME_X+8`（=118）/ `HB_NUM_DY`（=28） | 我方道具名的 x / y 相对坐标 |
 | `WX_BADGE_Y`/`H`/`PAD_X`/`R`/`RIGHT` | 4 / 16 / 6 / 5 / 4 | 天气胶囊几何（右对齐贴边） |
 
-**改动文件清单**（24 处）：
+**改动文件清单**（25 处）：
 
 ```
  M .gitignore            （新增 data/icons_4bpp、data/icons_raw 忽略规则）
  M Makefile              （新增 icons 目标；SCREEN_SRC 加入 gen/poke_icons.c）
- M src/poke_session.c/h  （受控自动推进 + key_down 维护 + 换人页图标/HP/等级/cur-max + 行高）
+ M src/poke_battle.c     （直接伤害打倒对手后补一句「… 倒下了！」日志）
+ M src/poke_session.c/h  （整场自动推进 + 被击倒停下 + key_down 维护 + 换人页图标/HP/等级/cur-max + 行高）
  M src/poke_ui.c/h       （wx_badge 天气胶囊 + 我方道具名 + 行首图标/HP 条/子行 + 等待动效 + MENU_ROW_H_ICON）
  M src/poke_ui_state.c   （图鉴列表一屏行数 8 → 6）
  M test/dump_screen.c    （build_hero 补 wx_text="晴" / my_item="木炭" / wait_anim=0）
  M test/play_pc.c        （自检适配新的日志推进节奏）
  M test/test_render.c    （HUD 天气/道具/换人条的取点断言）
- M test/test_session.c   （自动推进时序 + 换人页映射断言）
+ M test/test_session.c   （自动推进时序 + 被击倒暂停 + 换人页映射断言）
  M test/test_sprites.c   （图标集自检：张数/尺寸/覆盖率）
  M test/test_ui.c        （行数断言 8 → 6）
  M tools/make_readme_images.py（补画天气胶囊与我方道具名）
- M README.md / WORKLOG.md（断言计数 983 → 1065 + 图标/天气/道具/换人说明）
+ M README.md / WORKLOG.md（断言计数 983 → 1109 + 图标/天气/道具/换人/日志规则说明）
  M docs/img/hero.png     （重出，无损重生成）
  A tools/build_icons_c.py（新：32×32 图标生成器）
  A gen/poke_icons.c/.h   （新：386 张 32×32 图标，已入库）
@@ -447,8 +451,16 @@ make lvgl-font FONT=data/fonts/SmileSans-Oblique.ttf   # 重新生成中文字�
 5. **队伍配置一屏行数 8 → 6 是受约束的结果。** 带上 32×32 图标后行高由 28 变 37，
    8 行的列表板会**压到状态行**，触碰「列表板不得压状态行」的编译期自检断言，
    故降到 6 行。**教训：加行内元素时要回头看它对「一屏几行」和下层几何的连锁影响。**
+6. **「被打倒」原本根本没有任何日志行。** 直接伤害把人打到 0 血时，引擎只写
+   「造成了 N 点伤害」就完了 —— 玩家看不出这一击把人打没了，会话层也**没法把自动
+   播放停在那一行**（关键词 `倒下/濒死` 在直接伤害路径上永远命中不了，只有异常状态
+   掉死 / 混乱自伤 / 道具反噬那几条文案才带「倒下」）。修法是在 `apply_damage` 的
+   伤害播报后补一句「%s 的 %s 倒下了！」，并把 `log_is_ko()` 的关键字补上
+   「吸干了」（寄生种子吸干的死亡）。**教训：靠文案关键词驱动的界面行为，必须先确认
+   该文案在产生这个行为的**所有**路径上都真的存在，否则规则会静默地只对一部分路径
+   生效；反过来，新增死亡文案时 `log_is_ko()` 的关键字表也要同步。**
 
-**验证**：`make test` → **1065 项断言全过 / 17 组 0 处不一致 / 零编译警告**；
+**验证**：`make test` → **1109 项断言全过 / 17 组 0 处不一致 / 零编译警告**；
 `make play-check` → 15/15；`make render-compare` → 差异 >32 的像素 **0.00%**（阈值 2%）通过。
 
 ---
