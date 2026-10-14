@@ -1234,25 +1234,25 @@ void ai_choose(const Battle *b, int ai_is_foe, const AIConfig *cfg,
     }
 
     /*
- * 合法性兜底。
- *
- * 必须从 pick 起扫：pick 是 L2/L3 搜索得出的最优候选，cands 已按
- * L1 分降序排列，所以「从 0 开始找第一个合法的」永远等于 cands[0]，
- * 会把搜索结果整���丢掉（L2/L3 白跑，AI 退化成纯 L1）。
- * 若 pick 本身不合法（理论上不会，gen_cands 已过滤），再回退到全量扫描。
- */
-int chosen = -1;
-for (int i = pick; i < n; i++) {
-    AIAction t;
-    t.is_switch = cands[i].is_switch;
-    t.slot = cands[i].slot;
-    t.mega_pid = cands[i].mega_pid;
-    if (action_legal(b, ctx.side, &t)) {
-        chosen = i;
-        break;
+     * 合法性兜底。
+     *
+     * 必须从 pick 起扫：pick 是 L2/L3 搜索得出的最优候选，cands 已按
+     * L1 分降序排列，所以「从 0 开始找第一个合法的」永远等于 cands[0]，
+     * 会把搜索结果整个丢掉（L2/L3 白跑，AI 退化成纯 L1）。
+     * 若 pick 本身不合法（理论上不会，gen_cands 已过滤），再回退到全量扫描。
+     */
+    int chosen = -1;
+    for (int i = pick; i < n; i++) {
+        AIAction t;
+        t.is_switch = cands[i].is_switch;
+        t.slot = cands[i].slot;
+        t.mega_pid = cands[i].mega_pid;
+        if (action_legal(b, ctx.side, &t)) {
+            chosen = i;
+            break;
+        }
     }
-}
-if (chosen < 0) {
+    if (chosen < 0) {
         for (int i = 0; i < n; i++) {
             AIAction t;
             t.is_switch = cands[i].is_switch;
