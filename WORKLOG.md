@@ -75,13 +75,13 @@ git config --local --get user.email   # → baiguiyeyou@outlook.com
 | 测试程序 | 断言数 | 测试程序 | 断言数 |
 |---|---|---|---|
 | `data_selfcheck` | 110 | `test_font` | 25 |
-| `test_calc` | 131 | `test_render` | 97 |
+| `test_calc` | 131 | `test_render` | 105 |
 | `test_battle` | 100 | `test_input` | 51 |
 | `test_ai` | 19 | `test_ui` | 125 |
-| `test_sprites` | 14 | `test_session` | 311 |
-| | | **合计** | **983** |
+| `test_sprites` | 24 | `test_session` | 375 |
+| | | **合计** | **1065** |
 
-- `make test` → 983 项全过，零编译警告
+- `make test` → 1065 项全过，零编译警告
 - `make check-consistency` → **17 组跨文件检查，0 处不一致**
 - `make play-check` → PC 试玩窗口无头自检 15/15
 
@@ -375,7 +375,85 @@ make lvgl-font FONT=data/fonts/SmileSans-Oblique.ttf   # 重新生成中文字�
 
 ---
 
-## 10. 环境事实速查（硬件侧）
+## 10. 日志自动推进 / 战斗 HUD / 32×32 队伍小图标（2026-10-14 本轮）
+
+本轮目标：把「开场日志一条条自动放」做成**受玩家控制**的自动播放，给战斗界面
+补 **天气标志 + 我方道具标志**，再把新做的 **386 只 32×32 队伍小图标**接进
+选择队伍 / 队伍配置 / 换人三屏（换人页顺带挂上 HP 条）。
+
+**行为**：
+
+- **日志受控自动推进**：战斗开始后逐条播放，普通行停 `SES_LOG_DWELL_MS`=1 秒，
+  关键行（日志含「天气/特性/起作用/威吓/倒下/濒死」之一）停 `SES_LOG_DWELL_KEY_MS`=1.5 秒。
+  按住任意键 = 暂停、松开 = 恢复；短按确定 = 前进一条；长按确定 = **取消自动播放并跳到本批末尾**。
+- **状态行**：等待手动推进时左侧画旋转动效（四帧 `/ - \ |`，每帧 `SES_WAIT_ANIM_MS`=125 ms）；
+  右侧文案自动播放中显示「自动中…」，等待推进时显示「确定   长按跳过」。
+- **天气胶囊**：右上角右对齐贴边，文字「晴/雨/沙/雹」；**无天气不画**。
+- **我方道具名**：**纯文字、无图标**，画在血条框 HP 数字行左侧（如「木炭」）；**无道具不画**。
+- **换人页**：每行「行首 32×32 图标 + 名字 + LvNN 小字 + 右侧 HP 条 + `cur/max`」；
+  HP 条分档绿/黄/红（与战斗界面同一套），行高用 `MENU_ROW_H_ICON`=37。
+- **队伍配置（图鉴列表）一屏行数**由 8 改为 **6**。
+
+**关键参数**：
+
+| 常量 | 值 | 含义 |
+|---|---|---|
+| `SES_LOG_DWELL_MS` | 1000 | 普通日志行的自动停留时长（ms） |
+| `SES_LOG_DWELL_KEY_MS` | 1500 | 关键日志行多停一拍（天气/特性/起作用/威吓/倒下/濒死） |
+| `SES_WAIT_ANIM_MS` | 125 | 等待推进动效每帧毫秒（4 帧循环） |
+| `SES_LOG_AT_NONE` | `0xFFFFFFFF` | `log_at_for` 的「未计时」哨兵 |
+| `MENU_ROW_H_ICON` | 37 | 带图标的列表行高（默认行高 28） |
+| `ICON_COUNT` / `ICON_SIZE` | 386 / 32 | 图标表张数与每张尺寸 |
+| `MY_ITEM_X` / `MY_ITEM_DY` | `HB_ME_X+8`（=118）/ `HB_NUM_DY`（=28） | 我方道具名的 x / y 相对坐标 |
+| `WX_BADGE_Y`/`H`/`PAD_X`/`R`/`RIGHT` | 4 / 16 / 6 / 5 / 4 | 天气胶囊几何（右对齐贴边） |
+
+**改动文件清单**（24 处）：
+
+```
+ M .gitignore            （新增 data/icons_4bpp、data/icons_raw 忽略规则）
+ M Makefile              （新增 icons 目标；SCREEN_SRC 加入 gen/poke_icons.c）
+ M src/poke_session.c/h  （受控自动推进 + key_down 维护 + 换人页图标/HP/等级/cur-max + 行高）
+ M src/poke_ui.c/h       （wx_badge 天气胶囊 + 我方道具名 + 行首图标/HP 条/子行 + 等待动效 + MENU_ROW_H_ICON）
+ M src/poke_ui_state.c   （图鉴列表一屏行数 8 → 6）
+ M test/dump_screen.c    （build_hero 补 wx_text="晴" / my_item="木炭" / wait_anim=0）
+ M test/play_pc.c        （自检适配新的日志推进节奏）
+ M test/test_render.c    （HUD 天气/道具/换人条的取点断言）
+ M test/test_session.c   （自动推进时序 + 换人页映射断言）
+ M test/test_sprites.c   （图标集自检：张数/尺寸/覆盖率）
+ M test/test_ui.c        （行数断言 8 → 6）
+ M tools/make_readme_images.py（补画天气胶囊与我方道具名）
+ M README.md / WORKLOG.md（断言计数 983 → 1065 + 图标/天气/道具/换人说明）
+ M docs/img/hero.png     （重出，无损重生成）
+ A tools/build_icons_c.py（新：32×32 图标生成器）
+ A gen/poke_icons.c/.h   （新：386 张 32×32 图标，已入库）
+```
+
+**根因与教训**：
+
+1. **「无按键」判定不能用 `key_is_down()`。** 单测直接投按键事件、**不走 `key_poll`**，
+   于是 `key_is_down()` 永远读不到按下状态，暂停/恢复形同虚设。改成在会话层用
+   `key_down` 布尔量，由 `ses_feed` 依 `KEY_EV_PRESS` / `KEY_EV_RELEASE` 自行维护。
+   **教训：能被单测直投的层，别去依赖「只在上层轮询里才有意义」的状态查询函数。**
+2. **计时惰性初始化，避免与合法序号 0 撞车。** `Session` 整体清零后 `log_at_for` 会变成 0，
+   而 0 是一个**合法日志序号** —— 不额外设哨兵就会被误判成「本条已在计时」。
+   改用 `SES_LOG_AT_NONE = 0xFFFFFFFF`，并在清零时补设。
+   **教训：「0 合法 + 又是默认初值」的计数字段，必须另设哨兵。**
+3. **换人页图标的 pid 必须用 `base.species_id`，不能用 `active_pid`。** Mega 形态的
+   pid ≥ 10000，而图标表只覆盖 1..386，用 `active_pid` 会查不到图标（静默空白）。
+   **教训：查「按图鉴号索引」的静态表时，一律用基础物种号。**
+4. **`row_hp_permil` 用「> 0 才画」，而不是 -1 哨兵。** 存活宝可梦的 permil 必然 ≥ 1，
+   0 天然是「无血条」的哨兵，不必引入 -1（引入就得在每处初始化时记得写 -1）。
+   **教训：哨兵尽量选「数据域里不可能出现的值」，省掉一片初始化。**
+5. **队伍配置一屏行数 8 → 6 是受约束的结果。** 带上 32×32 图标后行高由 28 变 37，
+   8 行的列表板会**压到状态行**，触碰「列表板不得压状态行」的编译期自检断言，
+   故降到 6 行。**教训：加行内元素时要回头看它对「一屏几行」和下层几何的连锁影响。**
+
+**验证**：`make test` → **1065 项断言全过 / 17 组 0 处不一致 / 零编译警告**；
+`make play-check` → 15/15；`make render-compare` → 差异 >32 的像素 **0.00%**（阈值 2%）通过。
+
+---
+
+## 11. 环境事实速查（硬件侧）
 
 来自官方仓 `github.com/FoloToy/ai-passport`（MIT）的**已查证事实**，早期版本全估错过：
 
