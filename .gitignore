@@ -27,6 +27,8 @@ data/sprites_4bpp/
 data/sprites_preview/
 data/font_preview/
 data/screen_preview/
+# AI 对战基准（make bench-teams --csv）的输出，随时可重跑
+data/ai_bench/
 
 # ---- Python ----
 __pycache__/

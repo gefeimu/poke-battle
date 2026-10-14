@@ -18,27 +18,13 @@
 #include "poke_battle.h"
 #include "poke_learnsets.h"
 
-/* ---- 固定随机源 ---- */
-static uint32_t s_rng = 0x12345678u;
-
-uint32_t battle_rng(void)
-{
-    s_rng ^= s_rng << 13;
-    s_rng ^= s_rng >> 17;
-    s_rng ^= s_rng << 5;
-    return s_rng;
-}
-
-/*伤害随机因子同源覆盖，保证 AI 的伤害预估可重放
- * （-DPOKE_CALC_TEST_NO_RAND 关掉了 poke_calc.c 内的实现）。*/
-uint8_t calc_rand_85_100(void)
-{
-    s_rng ^= s_rng << 13;
-    s_rng ^= s_rng >> 17;
-    s_rng ^= s_rng << 5;
-    return (uint8_t)(85 + (s_rng % 16));
-}
-static void rng_reset(void) { s_rng = 0x12345678u; }
+/*
+ * 随机源覆盖、队伍装配、对局循环统一放在 ai_arena.h —— 与 bench_teams
+ * 共用同一份对局实现。合出去的原因很实际：arena_play 里的换人处理有
+ * 非平凡规则（battle_step 的 rc 语义、濒死必须换人），写第二份几乎必然
+ * 漂移，到时候两边的胜率就不可比了。
+ */
+#include "ai_arena.h"
 
 static int g_pass = 0, g_fail = 0;
 
@@ -55,91 +41,12 @@ static void ok(int cond, const char *what, const char *detail)
 
 /* ----  fixtures ---- */
 
-static uint16_t find_move(const char *name)
-{
-    for (uint16_t i = 1; i < MOVE_COUNT; i++) {
-        if (strcmp(mv_get(i)->name, name) == 0) {
-            return i;
-        }
-    }
-    return 0;
-}
-
 /* 数值断言：把期望/实际一并打出来，方便定位 */
 static void ok_u16(uint16_t got, uint16_t want, const char *what)
 {
     char buf[96];
     snprintf(buf, sizeof(buf), "期望 %u，实得 %u", want, got);
     ok(got == want, what, buf);
-}
-
-typedef struct {
-    uint16_t pid;
-    uint16_t item;
-    uint16_t mv[4];
-    uint8_t  hp_pct; /* 0 = 满血 */
-} MonSpec;
-
-/* 建一方：返回放了几只 */
-static int build_side(Battle *b, int side_is_foe, const MonSpec *specs, int n)
-{
-    for (int i = 0; i < n; i++) {
-        BattleMon m;
-        mon_init(&m, specs[i].pid, 50, 0, ABIL_NONE, specs[i].item, specs[i].mv);
-        if (specs[i].hp_pct > 0) {
-            m.cur_hp = (uint16_t)((uint32_t)m.hp_max * specs[i].hp_pct / 100);
-            if (m.cur_hp == 0) {
-                m.cur_hp = 1;
-            }
-        }
-        battle_set_mon(b, side_is_foe, (uint8_t)i, &m);
-    }
-    return n;
-}
-
-static void start_battle(Battle *b, const MonSpec *mine, int nm,
-                         const MonSpec *foes, int nf)
-{
-    battle_init(b);
-    b->me.name = "我方";
-    b->foe.name = "对手";
-    build_side(b, 0, mine, nm);
-    build_side(b, 1, foes, nf);
-    battle_start(b);
-}
-
-/* 询问 AI（每次重置随机源保证可重放） */
-static AIAction ask(Battle *b, int side, uint8_t level)
-{
-    AIConfig cfg;
-    ai_config_default(&cfg, level);
-    AIAction a;
-    rng_reset();
-    ai_choose(b, side, &cfg, &a);
-    return a;
-}
-
-static const char *act_str(const AIAction *a, char *buf, size_t n)
-{
-    if (a->is_switch) {
-        snprintf(buf, n, "换人到 %u 号位", a->slot);
-    } else if (a->mega_pid) {
-        snprintf(buf, n, "Mega %u 后用 %u 号招", a->mega_pid, a->slot);
-    } else {
-        snprintf(buf, n, "用 %u 号招", a->slot);
-    }
-    return buf;
-}
-
-/* 找某个招式在某只宝可梦招式槽里的下标，找不到返回 0xFF */
-static uint8_t slot_of(const BattleMon *m, uint16_t move_id)
-{
-    for (int i = 0; i < 4; i++) {
-        if (m->move[i] == move_id) {
-            return (uint8_t)i;
-        }
-    }
-    return 0xFF;
 }
 
 /* ---------- 用例 ---------- */
@@ -589,220 +496,38 @@ static void test_eval_symmetry(void)
 
 /* ---------- 模糊测试 ---------- */
 
-/* 按 威力x命中 挑 4 个招式（与游戏层默认配装同规则） */
-static void pick_moves(uint16_t pid, uint16_t out[4])
-{
-    const LearnSet *ls = learnset_get(pid);
-    uint16_t cand[64];
-    int n = 0;
-    if (ls) {
-        for (int k = 0; k < ls->node_count; k++) {
-            if (ls->nodes[k].level > 50) continue;
-            uint16_t mid = ls->nodes[k].move_id;
-            if (mid == 0 || mid >= MOVE_COUNT) continue;
-            int dup = 0;
-            for (int j = 0; j < n; j++) if (cand[j] == mid) dup = 1;
-            if (!dup && n < 64) cand[n++] = mid;
-        }
-    }
-    for (int i = 0; i < 4; i++) {
-        int best = -1;
-        uint32_t best_score = 0;
-        for (int j = 0; j < n; j++) {
-            const MoveDef *md = mv_get(cand[j]);
-            uint32_t sc = (uint32_t)md->power * (md->accuracy ? md->accuracy : 100);
-            if (md->power == 0) sc /= 4;
-            if (sc > best_score) { best_score = sc; best = j; }
-        }
-        if (best < 0) {
-            out[i] = (i == 0) ? 33u : 0u;
-        } else {
-            out[i] = cand[best];
-            cand[best] = cand[n - 1];
-            n--;
-        }
-    }
-}
+/* 动作合法性检查、随机手、has_any_legal 均由 ai_arena.h 提供 */
 
-static const uint16_t kPool[] = {
-    3, 6, 9, 25, 59, 65, 68, 94, 112, 130, 143, 149, 154, 196, 212,
-    230, 242, 248, 254, 282, 286, 306, 330, 334, 373, 376, 380, 384,
-};
-
-static void random_team(MonSpec *specs, int n, uint32_t seed)
-{
-    for (int i = 0; i < n; i++) {
-        seed = seed * 1103515245u + 12345u;
-        specs[i].pid = kPool[(seed >> 16) % (sizeof(kPool) / sizeof(kPool[0]))];
-        specs[i].item = 0;
-        pick_moves(specs[i].pid, specs[i].mv);
-        specs[i].hp_pct = 0;
-    }
-}
-
-/* 动作合法性检查 */
-static int action_valid(const Battle *b, int side, const AIAction *a)
-{
-    const BattleSide *us = side ? &b->foe : &b->me;
-    const BattleMon *me = &us->team[us->active];
-    if (a->mega_pid) {
-        if (!ai_mon_can_mega(me)) return 0;
-        if (mega_to_base(a->mega_pid) != me->active_pid) return 0;
-    }
-    if (a->is_switch) {
-        if (a->slot >= TEAM_SIZE || a->slot == us->active) return 0;
-        const BattleMon *t = &us->team[a->slot];
-        return t->alive && t->cur_hp > 0;
-    }
-    if (a->slot >= MOVES_PER_MON) return 0;
-    return me->move[a->slot] != 0 && me->pp[a->slot] > 0;
-}
-
-/* 随机手（用于强度对照）。没 PP 时会换人，什么都不行就空过 */
-static void random_action(const Battle *b, int side, AIAction *a)
-{
-    const BattleSide *us = side ? &b->foe : &b->me;
-    const BattleMon *me = &us->team[us->active];
-    a->mega_pid = 0;
-    a->is_switch = 0;
-    a->slot = 0;
-
-    /* 濒死必须换人。这条不能漏：之前随机手在濒死时仍然"出招"，
-     * battle_step 就一直返回「对方需换人」而对手永远换不了，
-     * 整局卡在同一个回合直到 guard 用尽（强度测试 16 局全判平局）。 */
-    if (me->cur_hp == 0) {
-        for (int i = 0; i < TEAM_SIZE; i++) {
-            if ((uint8_t)i == us->active) continue;
-            const BattleMon *t = &us->team[i];
-            if (!t->alive || t->cur_hp == 0) continue;
-            a->is_switch = 1;
-            a->slot = (uint8_t)i;
-            return;
-        }
-        return; /* 无替补，让引擎判负 */
-    }
-
-    int legal[4], n = 0;
-    for (int i = 0; i < 4; i++) {
-        if (me->move[i] && me->pp[i]) legal[n++] = i;
-    }
-    if (n > 0) {
-        a->slot = (uint8_t)legal[battle_rng() % (unsigned)n];
-        return;
-    }
-    /* PP 耗尽：换一只能打的上来 */
-    for (int i = 0; i < TEAM_SIZE; i++) {
-        if ((uint8_t)i == us->active) continue;
-        const BattleMon *t = &us->team[i];
-        if (!t->alive || t->cur_hp == 0) continue;
-        int tl = 0;
-        for (int k = 0; k < 4; k++) {
-            if (t->move[k] && t->pp[k]) tl = 1;
-        }
-        if (tl) {
-            a->is_switch = 1;
-            a->slot = (uint8_t)i;
-            return;
-        }
-    }
-    /* 全军覆没：空过（引擎会记"什么都做不了"） */
-}
-
-/* 当前是否存在任何合法动作（用于区分"非法"和"无动作可用"） */
-static int has_any_legal(const Battle *b, int side)
-{
-    const BattleSide *us = side ? &b->foe : &b->me;
-    const BattleMon *me = &us->team[us->active];
-    for (int i = 0; i < 4; i++) {
-        if (me->move[i] && me->pp[i]) return 1;
-    }
-    for (int i = 0; i < TEAM_SIZE; i++) {
-        if ((uint8_t)i == us->active) continue;
-        const BattleMon *t = &us->team[i];
-        if (!t->alive || t->cur_hp == 0) continue;
-        for (int k = 0; k < 4; k++) {
-            if (t->move[k] && t->pp[k]) return 1;
-        }
-    }
-    return 0;
-}
-
-/* 打一整局：ai_side 由 AI 控制
+/*
+ * 打一整局：ai_side 由 AI 控制
  *   -1 = 双方都 AI
  *    0 = 只有 side 0 用 AI，side 1 随机
  *    1 = 只有 side 1 用 AI，side 0 随机
  *   -2 = 双方都随机（强度对照组）
- * 返回胜方 0/1/-1平 */
+ * 返回胜方 0/1/-1平。
+ *
+ * 这里只负责「种子 → 两支队伍 → 档位映射」，真正的对局循环在
+ * ai_arena.h 的 arena_play 里 —— bench_teams 用的是同一份，
+ * 这样两边跑出来的胜率才可比。
+ */
 static int play_game(int ai_side, uint8_t level, int opponent_level,
                      uint32_t seed, int *turns_out, int *bad_out)
 {
-    MonSpec mine[TEAM_SIZE], foes[TEAM_SIZE];
-    random_team(mine, TEAM_SIZE, seed);
-    random_team(foes, TEAM_SIZE, seed ^ 0x5DEECE66Du);
+    ArenaTeam t0, t1;
+    MonSpec ms[TEAM_SIZE];
+    random_team(ms, TEAM_SIZE, seed);
+    for (int i = 0; i < TEAM_SIZE; i++) t0.mon[i] = ms[i];
+    random_team(ms, TEAM_SIZE, seed ^ 0x5DEECE66Du);
+    for (int i = 0; i < TEAM_SIZE; i++) t1.mon[i] = ms[i];
 
-    Battle b;
-    battle_init(&b);
-    b.me.name = "我方";
-    b.foe.name = "对手";
-    build_side(&b, 0, mine, TEAM_SIZE);
-    build_side(&b, 1, foes, TEAM_SIZE);
-    battle_start(&b);
-
-    /* 每回合最多推进 600 步。正常一局 30~60 回合 × 每回合一次
-     * battle_step + 最多两次换人，600 步有充足余量；上限存在是为了
-     * 「引擎有 bug 导致 battle_step 不推进回合」时能停下来报错，
-     * 而不是像之前那样靠 100000 次空转把测试拖到超时。 */
-    int guard = 0;
-    while (b.result == BATTLE_ONGOING && b.turn < 300 && guard < 600) {
-        guard++;
-        for (int side = 0; side < 2; side++) {
-            const BattleMon *act = battle_active_c(&b, side);
-            if (act && act->cur_hp == 0) {
-                /* 濒死：必须换人（AI 或随机手各出一决策） */
-                AIAction a;
-                int use_ai = (ai_side >= 0) ? (ai_side == side) : (ai_side == -1);
-                if (use_ai) {
-                    a = ask(&b, side, side == 0 ? level : opponent_level);
-                } else {
-                    rng_reset();
-                    random_action(&b, side, &a);
-                }
-            if (!action_valid(&b, side, &a)) {
-                /* 无动作可用（PP 耗尽且无替补）是空过，不算非法 */
-                if (has_any_legal(&b, side)) (*bad_out)++;
-            }
-            if (a.is_switch && battle_switch(&b, side, a.slot) != 0) {
-                (*bad_out)++;
-            }
-            continue;
-        }
-        AIAction a;
-        int use_ai = (ai_side >= 0) ? (ai_side == side) : (ai_side == -1);
-        if (use_ai) {
-            a = ask(&b, side, side == 0 ? level : opponent_level);
-        } else {
-            rng_reset();
-            random_action(&b, side, &a);
-        }
-        if (!action_valid(&b, side, &a)) {
-            if (has_any_legal(&b, side)) (*bad_out)++;
-        }
-        ai_apply(&b, side, &a);
-        }
-        /* rc 只是「谁还需要换人」的信号：1=我方 2=对方 3=双方。
-         * 两侧的濒死已在上面的循环里处理过，这里 rc 通常是 0；
-         * 若为 1/2/3 说明还有没换完的，下一轮循环会接着处理。 */
-        int rc = battle_step(&b);
-        if (rc < 0 && b.result == BATTLE_ONGOING) {
-            /* battle_step 拒绝推进但战斗未结束 = 引擎空转，
-             * 属于引擎缺陷，立即停下让断言暴露出来而不是空转到 guard 用尽。 */
-            break;
-        }
+    uint8_t lv0, lv1;
+    switch (ai_side) {
+    case -2: lv0 = ARENA_RANDOM; lv1 = ARENA_RANDOM; break;
+    case -1: lv0 = level;        lv1 = (uint8_t)opponent_level; break;
+    case  0: lv0 = level;        lv1 = ARENA_RANDOM; break;
+    default: lv0 = ARENA_RANDOM; lv1 = level; break; /* ai_side == 1 */
     }
-    *turns_out = b.turn;
-    if (b.result == BATTLE_WIN) return 0;
-    if (b.result == BATTLE_LOSE) return 1;
-    return -1;
+    return arena_play(&t0, &t1, lv0, lv1, turns_out, bad_out);
 }
 
 /* 12. AI 双边对打：全部合法、能终局 */

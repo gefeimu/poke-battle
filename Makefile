@@ -7,6 +7,7 @@
 #   make            编译全部
 #   make test       编译并跑全部测试（含跨文件一致性检查）
 #   make bench      AI 决策耗时剖析
+#   make bench-teams  多队伍 AI 对战基准（档位矩阵 / 队伍风格矩阵 / 大样本胜率）
 #   make types      重新生成属性克制表（改克制关系后必须跑）
 #   make sprites         重新生成精灵图（需指定 SPRITES_SRC 源图目录）
 #   make sprites-preview 把固件里的精灵图导成 PNG 肉眼检查画质
@@ -75,7 +76,7 @@ BUILD = build
 TESTS = data_selfcheck test_calc test_battle test_ai test_sprites test_font \
         test_render test_input test_ui test_session
 
-.PHONY: all test check-consistency bench types stat-golden sprites sprites-preview \
+.PHONY: all test check-consistency bench bench-teams types stat-golden sprites sprites-preview \
         font lvgl-font lvgl-font-to-c font-preview readme-images \
         screen-preview render-compare play play-check clean
 
@@ -96,7 +97,11 @@ $(BUILD)/test_calc: test/test_calc.c gen/poke_stat_golden.h $(SRC) | $(BUILD)
 $(BUILD)/test_battle: test/test_battle.c $(SRC) | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) $(TESTFLAGS) -o $@ $< $(SRC)
 
-$(BUILD)/test_ai: test/test_ai.c $(SRC_AI) | $(BUILD)
+# AI 测试与基准共用的脚手架（随机源覆盖 + 对局循环）。显式写进依赖：
+# 改了这个头文件，链接它的程序必须重编，否则跑的还是旧的对局逻辑。
+ARENA_HDR = test/ai_arena.h
+
+$(BUILD)/test_ai: test/test_ai.c $(ARENA_HDR) $(SRC_AI) | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) $(TESTFLAGS) -o $@ $< $(SRC_AI)
 
 # 精灵图自检只依赖图片数据，不链接战斗引擎
@@ -137,6 +142,11 @@ $(BUILD)/test_session: test/test_session.c $(SRC_AI) $(SESSION_SRC) \
 $(BUILD)/bench_ai: test/bench_ai.c $(SRC_AI) | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) $(TESTFLAGS) -o $@ $< $(SRC_AI)
 
+# 多队伍对战基准。与 test_ai 共用 ai_arena.h 的对局实现，所以两边
+# 跑出来的胜率可直接比较。参数：--quick / --games N / --csv out.csv
+$(BUILD)/bench_teams: test/bench_teams.c $(ARENA_HDR) $(SRC_AI) | $(BUILD)
+	$(CC) $(CFLAGS) $(INC) $(TESTFLAGS) -o $@ $< $(SRC_AI)
+
 # 顺序有意义：先生成/编译全部测试，再跑一致性检查。
 # 检查里的「README 测试计数」是**实测**的（跑一遍二进制读它的汇总行），
 # 二进制还不存在就没得比。串行 make 会按左到右的顺序构建前置目标。
@@ -154,6 +164,9 @@ check-consistency:
 
 bench: $(BUILD)/bench_ai
 	$(BUILD)/bench_ai
+
+bench-teams: $(BUILD)/bench_teams
+	$(BUILD)/bench_teams
 
 types:
 	python tools/regen_types.py
