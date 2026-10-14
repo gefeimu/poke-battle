@@ -42,13 +42,14 @@
 /* ---------------------------------------------------------------- 界面 */
 
 typedef enum {
-    UI_SCREEN_MAIN = 0,  /* 主菜单：开始对战 / 队伍配置 */
+    UI_SCREEN_MAIN = 0,  /* 主菜单：选择队伍 / 开始对战 / 队伍配置 */
     UI_SCREEN_TEAM,      /* 队伍配置：图鉴列表（可滚动） */
     UI_SCREEN_BATTLE,    /* 战斗主界面：招式菜单（2x2，与 hero 图一致） */
     UI_SCREEN_ACTION,    /* 战斗中弹层：换人 / 认输 */
     UI_SCREEN_CONFIRM,   /* 认输二次确认：取消 / 认输 */
     UI_SCREEN_SWITCH,    /* 换人选择 */
     UI_SCREEN_RESULT,    /* 结算 */
+    UI_SCREEN_PRESET,    /* 选择队伍：五支预设队列表 */
     UI_SCREEN_COUNT,
 } UiScreen;
 
@@ -70,10 +71,11 @@ enum {
     UI_CONFIRM_COUNT,
 };
 
-/* 主菜单的项 */
+/* 主菜单的项。顺序即列表顺序 —— **不要在中间插项**，会改变已存界面的光标含义。 */
 enum {
-    UI_MAIN_BATTLE = 0,
-    UI_MAIN_TEAM,
+    UI_MAIN_PRESET = 0,   /* 选择队伍 */
+    UI_MAIN_BATTLE,       /* 开始对战 */
+    UI_MAIN_TEAM,         /* 队伍配置 */
     UI_MAIN_COUNT,
 };
 
@@ -86,6 +88,7 @@ enum {
 typedef enum {
     UI_ACT_NONE = 0,
     UI_ACT_START_BATTLE,   /* 开始对战（调用方装队 + battle_start） */
+    UI_ACT_PICK_TEAM,      /* arg = 预设队序号 0..UI_PRESET_COUNT-1；调用方装该队 */
     UI_ACT_PICK_SPECIES,   /* arg = 图鉴序号；队伍编辑尚未实现，先报出来 */
     UI_ACT_CHOOSE_MOVE,    /* arg = **招式槽** 0..3（不是菜单序号） */
     UI_ACT_SWITCH_MON,     /* arg = **队伍槽** 0..5（不是菜单序号） */
@@ -117,6 +120,7 @@ typedef struct {
 
 #define UI_TEAM_COUNT  386   /* 图鉴只数（正面立绘 386 张），即队伍配置列表长度 */
 #define UI_TEAM_SLOTS  6     /* 队伍 6 只。刻意不 include poke_battle.h：这一层不该依赖引擎 */
+#define UI_PRESET_COUNT 5    /* 预设队伍数（会话层的 kPreset 与这里的列表长度共用） */
 
 /*
  * 界面要展示的数据由调用方填。**菜单序号 ≠ 数据下标**，所以要靠下面的

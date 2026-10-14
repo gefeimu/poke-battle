@@ -10,13 +10,14 @@
 int ui_screen_rows(UiScreen sc)
 {
     switch (sc) {
-    case UI_SCREEN_MAIN:    return 2;
+    case UI_SCREEN_MAIN:    return UI_MAIN_COUNT;   /* 选择队伍 / 开始对战 / 队伍配置 */
     case UI_SCREEN_TEAM:    return 8;   /* 图鉴列表一屏 8 行 */
     case UI_SCREEN_BATTLE:  return 2;   /* 招式菜单是 2x2，占两行 */
     case UI_SCREEN_ACTION:  return 2;
     case UI_SCREEN_CONFIRM: return 2;
     case UI_SCREEN_SWITCH:  return 6;   /* 队伍最多 6 只 */
     case UI_SCREEN_RESULT:  return 1;
+    case UI_SCREEN_PRESET:  return UI_PRESET_COUNT;   /* 五支预设队 */
     default:                return 1;
     }
 }
@@ -38,6 +39,7 @@ static int count_of(const UiState *s, UiScreen sc)
     case UI_SCREEN_CONFIRM: return UI_CONFIRM_COUNT;
     case UI_SCREEN_SWITCH:  return s->model.switch_count;
     case UI_SCREEN_RESULT:  return 1;
+    case UI_SCREEN_PRESET:  return UI_PRESET_COUNT;
     default:                return 1;
     }
 }
@@ -54,6 +56,7 @@ const char *ui_screen_title(UiScreen sc)
     case UI_SCREEN_CONFIRM: return "确定认输";
     case UI_SCREEN_SWITCH:  return "换人";
     case UI_SCREEN_RESULT:  return "结果";
+    case UI_SCREEN_PRESET:  return "选择队伍";
     default:                return "";
     }
 }
@@ -62,6 +65,7 @@ const char *ui_item_label(UiScreen sc, int index)
 {
     if (sc == UI_SCREEN_MAIN) {
         switch (index) {
+        case UI_MAIN_PRESET: return "选择队伍";
         case UI_MAIN_BATTLE: return "开始对战";
         case UI_MAIN_TEAM:   return "队伍配置";
         default:             return NULL;
@@ -95,6 +99,7 @@ const char *ui_screen_hint(UiScreen sc)
     case UI_SCREEN_CONFIRM: return "选择   确定   长按返回";
     case UI_SCREEN_SWITCH:  return "选择   确定   长按返回";
     case UI_SCREEN_RESULT:  return "确定继续";
+    case UI_SCREEN_PRESET:  return "选择   确定   长按返回";
     default:                return "";
     }
 }
@@ -367,12 +372,25 @@ bool ui_state_feed(UiState *s, const KeyMsg *msg, uint32_t now_ms, UiResult *out
 
     switch (f->screen) {
     case UI_SCREEN_MAIN:
+        if (f->cursor == UI_MAIN_PRESET) {
+            push_screen(s, UI_SCREEN_PRESET, false);
+            return false;
+        }
         if (f->cursor == UI_MAIN_BATTLE) {
             push_screen(s, UI_SCREEN_BATTLE, false);
             return emit(out, UI_ACT_START_BATTLE, 0);
         }
         push_screen(s, UI_SCREEN_TEAM, false);
         return false;
+
+    case UI_SCREEN_PRESET:
+        /* 选中某支预设队 → 报出序号，界面不动（与图鉴列表一致）：玩家可能
+         * 想连点几支比较，选完长按返回主菜单再去「开始对战」。
+         * 没有可用项时不给动作。 */
+        if (f->cursor >= count_of(s, UI_SCREEN_PRESET)) {
+            return false;
+        }
+        return emit(out, UI_ACT_PICK_TEAM, f->cursor);
 
     case UI_SCREEN_TEAM:
         /* 逐只编辑（性格/努力值/招式…）是后面的事，先把「选了哪只」报上去 */

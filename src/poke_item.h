@@ -22,9 +22,6 @@
 /* 携带道具对某属性招式的威力加成百分比（20 = +20%） */
 uint16_t item_type_boost(uint16_t item_id, uint8_t move_type);
 
-/* 携带道具对某能力值的加成百分比（100 = 翻倍） */
-uint16_t item_stat_boost(uint16_t item_id, uint8_t stat_idx);
-
 /* 携带道具的额外暴击等级（焦点镜片 = 1） */
 int item_crit_stage(uint16_t item_id);
 

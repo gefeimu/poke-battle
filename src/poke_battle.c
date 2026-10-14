@@ -297,6 +297,17 @@ static int apply_stat_change(BattleMon *m, uint8_t stat, int8_t delta,
     if (stat < 1 || stat > 8) {
         return 0;
     }
+    /*
+     * 能力下降免疫：白色烟雾/净体等**特性**，气势头带/王者信物等**道具**。
+     * AI 侧（poke_ai.c）早已同时判两者，引擎这条一直没接 ——
+     * 于是「AI 以为挡得住、引擎照样降」两处不一致。现在接上。
+     */
+    if (delta < 0 &&
+        (ability_immune_stat_drop(m->base.ability) ||
+         item_immune_stat_drop(m->base.item))) {
+        log_add(log, "%s 的 %s 不会降低！", who, STAT_NAME_CN[stat - 1]);
+        return 0;
+    }
     /* stat 1..6 走 stage[]，7=命中 8=闪避单独存 */
     int8_t *slot = (stat <= 6) ? &m->stage[stat - 1]
                                : (stat == 7 ? &m->stage_acc : &m->stage_eva);
@@ -617,7 +628,8 @@ static int do_move(Battle *b, int attacker_is_foe)
         crit_stage = 3;
     }
     int crit_pct = kCritPct[crit_stage];
-    if ((int)(battle_rng() % 1000) < crit_pct) {
+    /* 先抽签（保持随机流与以前一致），再看防守方是否用道具免疫会心 */
+    if ((int)(battle_rng() % 1000) < crit_pct && !item_immune_crit(def->base.item)) {
         crit_pct = -1; /* 强制暴击 */
     }
 
@@ -686,9 +698,13 @@ static int do_move(Battle *b, int attacker_is_foe)
     /* ---- 道具：贝壳之铃回血 ---- */
     item_on_deal_damage(b, attacker_is_foe, total);
 
-    /* ---- 畏缩 ---- */
-    if (mv->flinch_chance > 0 && def->alive) {
-        if ((int)(battle_rng() % 100) < mv->flinch_chance) {
+    /* ---- 畏缩 ----
+     * 附加畏缩道具（王者信物类）的概率叠加在招式自身概率上；
+     * 防守方的光亮粉末类道具免疫畏缩。先抽签再判免疫，保持随机流不变。 */
+    int flinch_chance = (int)mv->flinch_chance + (int)item_flinch_pct(atk->base.item);
+    if (flinch_chance > 0 && def->alive) {
+        uint32_t roll = battle_rng();
+        if ((int)(roll % 100) < flinch_chance && !item_immune_flinch(def->base.item)) {
             def->flinched = 1;
         }
     }
@@ -885,6 +901,14 @@ if (b->my_action < 4 && me->move[b->my_action]) {
     }
     if (p_me != p_foe) {
         return p_me > p_foe ? 1 : 0;
+    }
+
+    /* 先制之爪：优先度打平后先抽签，单侧触发则该侧先手；
+     * 两侧都触发则回落到速度比较（与官方一致，先制之爪在速度判定之前）。 */
+    int q_me = item_quick_claw_proc(b, 0) ? 1 : 0;
+    int q_foe = item_quick_claw_proc(b, 1) ? 1 : 0;
+    if (q_me != q_foe) {
+        return q_me ? 1 : 0;
     }
 
     uint16_t sp_me = effective_speed(b, me);

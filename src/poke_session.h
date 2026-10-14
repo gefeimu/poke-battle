@@ -124,6 +124,15 @@ typedef struct {
      * 见 poke_battle.h 的 STRUGGLE_MOVE_ID。 */
     bool      struggle_menu;
 
+    /* 玩家已选的预设队序号（0..UI_PRESET_COUNT-1）。回主菜单时按它重装，
+     * 所以「再来一局」保留玩家选的那支，而不是弹回默认队。 */
+    uint8_t   team_index;
+
+    /* 对手随机抽签用的会话级种子。**刻意不占用 battle_rng** ——
+     * 在队伍装载阶段消耗引擎随机流会把整局的随机序列挪位，单测就不可重放了。
+     * 真机上可由 main 用 esp_random() 播种。 */
+    uint32_t  team_seed;
+
     /* ---- 展示字符串 ----
      * BattleScreen / MenuScreen 里全是 `const char *`，指向的内存必须活得比
      * 绘制调用长，所以缓存放在这里。ses_view() / ses_menu_view() 会刷新它们
@@ -159,8 +168,15 @@ typedef struct {
  */
 void ses_init(Session *s, uint8_t ai_level);
 
-/* 装手写死的默认队伍（双方各 6 只）。ses_init 已经调过，重开一局不必再调。 */
+/* 装默认队伍（我方 = 已选的 team_index 对应的预设队，对手随机抽一支）。
+ * ses_init 已经调过，重开一局不必再调。 */
 void ses_load_default_teams(Session *s);
+
+/*
+ * 装第 idx 支预设队为**我方**，并为对手从五支里随机抽一支（idx 越界钳到 0）。
+ * 顺带记下 team_index，供 ses_to_main 保留选择。
+ */
+void ses_load_preset(Session *s, int idx);
 
 /* 折行用的字体。不设就整条日志画一行（自检里只关心文字内容时够用）。 */
 void ses_set_fonts(Session *s, const UiFonts *fonts);

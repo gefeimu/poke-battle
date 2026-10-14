@@ -147,7 +147,8 @@ static void test_main_nav(void)
     rig_init(&r);
 
     ev_(&r, KEY_UP, KEY_EV_PRESS, NULL);
-    check(ui_state_cursor(&r.st) == 1, "第 0 项按上 → 环绕到最后一项（%d）",
+    check(ui_state_cursor(&r.st) == UI_MAIN_COUNT - 1,
+          "第 0 项按上 → 环绕到最后一项（%d）",
           ui_state_cursor(&r.st));
     ev_(&r, KEY_DOWN, KEY_EV_PRESS, NULL);
     check(ui_state_cursor(&r.st) == 0, "按下 → 回到第 0 项");
@@ -181,7 +182,8 @@ static void test_team_scroll(void)
     printf("\n[队伍配置] 386 项列表的滚动与按住连发\n");
     Rig r;
     rig_init(&r);
-    ev_(&r, KEY_DOWN, KEY_EV_PRESS, NULL);      /* 光标移到「队伍配置」 */
+    ev_(&r, KEY_DOWN, KEY_EV_PRESS, NULL);      /* 光标移到「开始对战」 */
+    ev_(&r, KEY_DOWN, KEY_EV_PRESS, NULL);      /* 再移到「队伍配置」 */
     tap(&r, KEY_OK, NULL);
     check(ui_state_screen(&r.st) == UI_SCREEN_TEAM, "进入队伍配置（%s）",
           screen_name(ui_state_screen(&r.st)));
@@ -224,6 +226,7 @@ static void test_team_scroll(void)
     Rig r3;
     rig_init(&r3);
     ev_(&r3, KEY_DOWN, KEY_EV_PRESS, NULL);
+    ev_(&r3, KEY_DOWN, KEY_EV_PRESS, NULL);
     tap(&r3, KEY_OK, NULL);
     for (int i = 0; i < 10; i++) {
         ev_(&r3, KEY_DOWN, KEY_EV_PRESS, NULL);
@@ -236,6 +239,7 @@ static void test_team_scroll(void)
     /* 从第 0 项往上环绕到最末项，窗口要跟到底 */
     Rig r4;
     rig_init(&r4);
+    ev_(&r4, KEY_DOWN, KEY_EV_PRESS, NULL);
     ev_(&r4, KEY_DOWN, KEY_EV_PRESS, NULL);
     tap(&r4, KEY_OK, NULL);
     ev_(&r4, KEY_UP, KEY_EV_PRESS, NULL);
@@ -262,6 +266,7 @@ static void test_battle_moves(void)
     ui_state_set_model(&r.st, &m);
 
     UiResult out;
+    ev_(&r, KEY_DOWN, KEY_EV_PRESS, NULL);      /* 光标移到「开始对战」 */
     bool got = tap(&r, KEY_OK, &out);
     check(got && out.act == UI_ACT_START_BATTLE, "主菜单第 1 项 → 开始对战（%s）",
           action_name(out.act));
@@ -309,6 +314,7 @@ static void test_overlay(void)
     rig_init(&r);
     UiModel m = model_sample();
     ui_state_set_model(&r.st, &m);
+    ev_(&r, KEY_DOWN, KEY_EV_PRESS, NULL);       /* 移到「开始对战」 */
     tap(&r, KEY_OK, NULL);                       /* 开始对战 */
     check(ui_state_screen(&r.st) == UI_SCREEN_BATTLE, "先到战斗主界面");
 
@@ -361,6 +367,7 @@ static void test_overlay(void)
     Rig r2;
     rig_init(&r2);
     ev_(&r2, KEY_DOWN, KEY_EV_PRESS, NULL);
+    ev_(&r2, KEY_DOWN, KEY_EV_PRESS, NULL);
     tap(&r2, KEY_OK, NULL);
     check(ui_state_screen(&r2.st) == UI_SCREEN_TEAM, "进队伍配置");
     hold(&r2, KEY_OK);
@@ -375,6 +382,7 @@ static void test_forfeit_confirm(void)
     rig_init(&r);
     UiModel m = model_sample();
     ui_state_set_model(&r.st, &m);
+    ev_(&r, KEY_DOWN, KEY_EV_PRESS, NULL);       /* 移到「开始对战」 */
     tap(&r, KEY_OK, NULL);                       /* 开始对战（动作 1） */
     hold(&r, KEY_OK);                            /* 打开弹层 */
     check(ui_state_screen(&r.st) == UI_SCREEN_ACTION, "先到弹层");
@@ -430,6 +438,7 @@ static void test_forfeit_confirm(void)
     /* 反复进出确认界面不会让栈溢出 */
     Rig r2;
     rig_init(&r2);
+    ev_(&r2, KEY_DOWN, KEY_EV_PRESS, NULL);      /* 移到「开始对战」 */
     tap(&r2, KEY_OK, NULL);
     for (int i = 0; i < 4; i++) {
         hold(&r2, KEY_OK);                       /* 打开弹层 */
@@ -518,6 +527,7 @@ static void test_swallow_click(void)
           r.nactions);
     ev_(&r, KEY_OK, KEY_EV_RELEASE, NULL);
     UiResult out;
+    ev_(&r, KEY_DOWN, KEY_EV_PRESS, NULL);      /* 移到「开始对战」 */
     bool got = tap(&r, KEY_OK, &out);
     check(got && out.act == UI_ACT_START_BATTLE,
           "下一次轻点恢复正常：开始对战（%s）", action_name(out.act));
@@ -526,6 +536,7 @@ static void test_swallow_click(void)
      * 若不被吞掉，就会顺手把弹层第 1 项「换人」也确定掉。 */
     Rig r2;
     rig_init(&r2);
+    ev_(&r2, KEY_DOWN, KEY_EV_PRESS, NULL);  /* 移到「开始对战」 */
     tap(&r2, KEY_OK, NULL);                  /* 开始对战 */
     ev_(&r2, KEY_OK, KEY_EV_PRESS, NULL);
     ev_(&r2, KEY_OK, KEY_EV_LONG, NULL);
@@ -590,8 +601,9 @@ static void test_defensive(void)
     /* 调用方不关心动作时传 NULL 也不能崩 */
     Rig r;
     rig_init(&r);
-    KeyMsg m = { .key = KEY_OK, .ev = KEY_EV_CLICK, .mv = 0, .t_ms = 16 };
-    check(ui_state_feed(&r.st, &m, 16, NULL), "UiResult 传 NULL 时仍能工作");
+    ev_(&r, KEY_DOWN, KEY_EV_PRESS, NULL);   /* 移到「开始对战」（这格 CLICK 会吐动作） */
+    KeyMsg m = { .key = KEY_OK, .ev = KEY_EV_CLICK, .mv = 0, .t_ms = 32 };
+    check(ui_state_feed(&r.st, &m, 32, NULL), "UiResult 传 NULL 时仍能工作");
 
     /* 反复切换不会让栈溢出 */
     Rig r2;
@@ -612,6 +624,7 @@ static void test_defensive(void)
     neg.move_count = 4;
     ui_state_set_model(&r3.st, &neg);
     ev_(&r3, KEY_DOWN, KEY_EV_PRESS, NULL);
+    ev_(&r3, KEY_DOWN, KEY_EV_PRESS, NULL);
     tap(&r3, KEY_OK, NULL);
     check(ui_state_screen(&r3.st) == UI_SCREEN_TEAM
           && ui_state_count(&r3.st) == UI_TEAM_COUNT,
@@ -619,6 +632,38 @@ static void test_defensive(void)
 }
 
 /* ================================================================ 回放 */
+
+static void test_preset_pick(void)
+{
+    printf("\n[选择队伍] 主菜单第 1 项 → 预设队伍列表\n");
+    Rig r;
+    rig_init(&r);
+
+    /* 「选择队伍」是主菜单第 0 项，光标本来就停在它上面 */
+    UiResult out;
+    bool got = tap(&r, KEY_OK, &out);
+    check(!got && ui_state_screen(&r.st) == UI_SCREEN_PRESET,
+          "确定 → 进「选择队伍」（%s）", screen_name(ui_state_screen(&r.st)));
+    check(ui_state_count(&r.st) == UI_PRESET_COUNT, "列表 %d 项", ui_state_count(&r.st));
+    check(ui_state_depth(&r.st) == 2, "压在主菜单之上（栈深 %d）", ui_state_depth(&r.st));
+
+    /* 确定某一支 → 报出序号，界面不动（装队由会话层做） */
+    got = tap(&r, KEY_OK, &out);
+    check(got && out.act == UI_ACT_PICK_TEAM && out.arg == 0,
+          "确定第 1 支 → 报选队伍（arg=%d，%s）", out.arg, action_name(out.act));
+    check(ui_state_screen(&r.st) == UI_SCREEN_PRESET, "选完之后仍停在列表");
+
+    /* 往下走再选，arg 跟着光标变 */
+    ev_(&r, KEY_DOWN, KEY_EV_PRESS, NULL);
+    got = tap(&r, KEY_OK, &out);
+    check(got && out.act == UI_ACT_PICK_TEAM && out.arg == 1,
+          "确定第 2 支 → arg=%d", out.arg);
+
+    /* 长按返回主菜单 */
+    hold(&r, KEY_OK);
+    check(ui_state_screen(&r.st) == UI_SCREEN_MAIN && ui_state_depth(&r.st) == 1,
+          "长按 → 回主菜单（%s）", screen_name(ui_state_screen(&r.st)));
+}
 
 static void test_trace(void)
 {
@@ -631,6 +676,7 @@ static void test_trace(void)
     ui_state_set_model(&r.st, &m);
 
     static const struct { KeyId k; KeyEvent e; const char *what; } seq[] = {
+        { KEY_DOWN, KEY_EV_PRESS,   "▲▼ 移到「开始对战」" },
         { KEY_DOWN, KEY_EV_PRESS,   "▲▼ 移到「队伍配置」" },
         { KEY_UP,   KEY_EV_PRESS,   "▲▼ 移回「开始对战」" },
         { KEY_OK,   KEY_EV_PRESS,   "OK 按下" },
@@ -705,6 +751,7 @@ int main(void)
     test_swallow_click();
     test_texts();
     test_defensive();
+    test_preset_pick();
     test_trace();
 
     printf("\n=== 结果: %d 通过, %d 失败 ===\n", g_pass, g_fail);
@@ -717,6 +764,7 @@ const char *screen_name(UiScreen sc)
 {
     switch (sc) {
     case UI_SCREEN_MAIN:    return "主菜单";
+    case UI_SCREEN_PRESET:  return "选择队伍";
     case UI_SCREEN_TEAM:    return "队伍配置";
     case UI_SCREEN_BATTLE:  return "战斗界面";
     case UI_SCREEN_ACTION:  return "弹层";
@@ -732,6 +780,7 @@ const char *action_name(UiAction a)
     switch (a) {
     case UI_ACT_NONE:          return "无";
     case UI_ACT_START_BATTLE:  return "开始对战";
+    case UI_ACT_PICK_TEAM:     return "选队伍";
     case UI_ACT_PICK_SPECIES:  return "选图鉴";
     case UI_ACT_CHOOSE_MOVE:   return "出招";
     case UI_ACT_SWITCH_MON:    return "换人";

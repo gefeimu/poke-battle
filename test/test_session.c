@@ -89,6 +89,7 @@ static const char *screen_name(UiScreen sc)
 {
     switch (sc) {
     case UI_SCREEN_MAIN:    return "主菜单";
+    case UI_SCREEN_PRESET:  return "选择队伍";
     case UI_SCREEN_TEAM:    return "队伍配置";
     case UI_SCREEN_BATTLE:  return "战斗界面";
     case UI_SCREEN_ACTION:  return "弹层";
@@ -203,7 +204,8 @@ static int play_log(Rig *r)
 /* 从主菜单开打，并把开场日志播完（停在等输入） */
 static void start_battle(Rig *r)
 {
-    ok_(r);            /* 主菜单第 1 项：开始对战 */
+    down_(r);          /* 光标从第 1 项「选择队伍」移到第 2 项「开始对战」 */
+    ok_(r);            /* 主菜单第 2 项：开始对战 */
     play_log(r);
 }
 
@@ -241,9 +243,10 @@ static void test_init(void)
     check(me && me->cur_hp == me->hp_max, "我方满血（%u/%u）",
           me ? me->cur_hp : 0, me ? me->hp_max : 0);
     check(me && me->move[0] && me->pp[0] == me->pp_max[0], "招式与 PP 都就位");
-    check_row(&r, 0, "开始对战");
-    check_row(&r, 1, "队伍配置");
-    check(ses_row_text(&r.s, 2) == NULL, "越界取行返回 NULL");
+    check_row(&r, 0, "选择队伍");
+    check_row(&r, 1, "开始对战");
+    check_row(&r, 2, "队伍配置");
+    check(ses_row_text(&r.s, 3) == NULL, "越界取行返回 NULL");
     check(strcmp(ses_result_text(&r.s), "") == 0, "还没结算，结算文字为空");
 }
 
@@ -252,6 +255,7 @@ static void test_intro(void)
     printf("\n[开场] 开始对战 → 逐条播开场日志\n");
     Rig r;
     rig_init(&r, AI_ROOKIE);
+    down_(&r);          /* 移到「开始对战」 */
     ok_(&r);
 
     check(ses_phase(&r.s) == SES_PHASE_LOG, "进入日志播放（%s）",
@@ -259,25 +263,30 @@ static void test_intro(void)
     check(ui_state_screen(&r.s.ui) == UI_SCREEN_BATTLE, "底下已经是战斗界面（%s）",
           screen_name(ui_state_screen(&r.s.ui)));
     check(r.s.b.turn == 1, "回合数从 1 起（%u）", r.s.b.turn);
-    check(r.s.b.log.count == 3, "开场写了 3 条日志（%u）", r.s.b.log.count);
-    check(r.s.log_end == 3, "播放终点 = 3（log_end = %u）", r.s.log_end);
+    /* 我方首发九尾带「日照」，出场时就会再写一条天气日志 —— 所以开场是
+     * 4 条，不是固定队伍时代的 3 条。（对手蚊香蛙皇的「降雨」想设天气时
+     * 场上已有晴天，被挡下，不再写。） */
+    check(r.s.b.log.count == 4, "开场写了 4 条日志（%u）", r.s.b.log.count);
+    check(r.s.log_end == 4, "播放终点 = 4（log_end = %u）", r.s.log_end);
 
     /* 逐条播：按一次 OK 前进一条，不多不少 */
-    for (uint32_t i = 0; i < 3; i++) {
+    for (uint32_t i = 0; i < 4; i++) {
         check(ses_log_index(&r.s) == i, "第 %u 次 OK 前停在第 %u 条", i + 1, i);
         ok_(&r);
     }
-    check(ses_phase(&r.s) == SES_PHASE_INPUT, "3 条播完，交给玩家（%s）",
+    check(ses_phase(&r.s) == SES_PHASE_INPUT, "4 条播完，交给玩家（%s）",
           phase_name(ses_phase(&r.s)));
-    check(r.s.log_advances == 3, "统计到 3 次推进（%u）", r.s.log_advances);
+    check(r.s.log_advances == 4, "统计到 4 次推进（%u）", r.s.log_advances);
 
     check(strcmp(ses_log_at(&r.s, 0), "战斗开始！我方 对 对手") == 0,
           "第 1 条 = 「%s」", ses_log_at(&r.s, 0));
-    check(strcmp(ses_log_at(&r.s, 1), "我方 派出了 喷火龙！") == 0,
+    check(strcmp(ses_log_at(&r.s, 1), "我方 派出了 九尾！") == 0,
           "第 2 条 = 「%s」", ses_log_at(&r.s, 1));
-    check(strcmp(ses_log_at(&r.s, 2), "对手 派出了 巨金怪！") == 0,
+    check(strcmp(ses_log_at(&r.s, 2), "对手 派出了 蚊香蛙皇！") == 0,
           "第 3 条 = 「%s」", ses_log_at(&r.s, 2));
-    check(ses_log_at(&r.s, 3) == NULL, "越界取日志返回 NULL");
+    check(strcmp(ses_log_at(&r.s, 3), "我方 的 日照 起作用了！") == 0,
+          "第 4 条 = 「%s」（天气特性出场生效）", ses_log_at(&r.s, 3));
+    check(ses_log_at(&r.s, 4) == NULL, "越界取日志返回 NULL");
 }
 
 static void test_first_turn(void)
@@ -409,7 +418,7 @@ static void test_voluntary_switch(void)
     check(ui_state_screen(&r.s.ui) == UI_SCREEN_SWITCH, "进入换人列表（%s）",
           screen_name(ui_state_screen(&r.s.ui)));
     check(!ui_state_forced(&r.s.ui), "自愿换人不是强制换人");
-    check_row(&r, 0, "水箭龟");
+    check_row(&r, 0, "妙蛙花");
 
     uint8_t turn0 = r.s.b.turn;
     ok_(&r);   /* 选第 1 项 */
@@ -450,7 +459,7 @@ static void test_forced_switch(void)
           b->turn);
     check(ui_state_count(&r.s.ui) == 5, "只列剩下 5 只（%d）",
           ui_state_count(&r.s.ui));
-    check_row(&r, 0, "水箭龟");
+    check_row(&r, 0, "妙蛙花");
 
     hold(&r, KEY_OK);
     check(ui_state_screen(&r.s.ui) == UI_SCREEN_SWITCH,
@@ -593,16 +602,21 @@ static void test_result_and_replay(void)
           me ? me->pp[0] : 0, me ? me->pp_max[0] : 0);
     check(strcmp(ses_result_text(&r.s), "") == 0, "结算文字已清空");
 
-    /* 再来一局：游标必须从 0 开始，不能接着上一局的序号数下去 */
+    /* 再来一局：游标必须从 0 开始，不能接着上一局的序号数下去。
+     * 注意回主菜单后光标复位到第 1 项「选择队伍」，要先 ▼ 到「开始对战」。 */
+    down_(&r);
     ok_(&r);
     check(ses_phase(&r.s) == SES_PHASE_LOG, "第二局正常开局（%s）",
           phase_name(ses_phase(&r.s)));
-    check(r.s.b.log.count == 3, "第二局的日志是新的 3 条（%u）",
-          r.s.b.log.count);
-    check(r.s.log_next == 0 && r.s.log_end == 3,
-          "第二局的播放游标从 0 开始（%u/%u）", r.s.log_next, r.s.log_end);
+    /* 开场至少 3 条；具体条数随对手的出场特性（天气 / 威吓）变化 ——
+     * 对手是随机抽的，写死数字会随种子变化假失败。这里只钉住真正的
+     * 不变式：游标从 0 起、终点跟着新日志数。 */
+    check(r.s.b.log.count >= 3, "第二局的日志是新的（%u 条）", r.s.b.log.count);
+    check(r.s.log_next == 0 && r.s.log_end == r.s.b.log.count,
+          "第二局的播放游标从 0 开始、终点 = 新日志数（%u/%u）",
+          r.s.log_next, r.s.log_end);
     check(strcmp(ses_log_at(&r.s, 0), "战斗开始！我方 对 对手") == 0,
-          "第二条第一条日志正常（「%s」）", ses_log_at(&r.s, 0));
+          "第二局第一条日志正常（「%s」）", ses_log_at(&r.s, 0));
 }
 
 static void test_log_skip_and_swallow(void)
@@ -682,9 +696,9 @@ static void test_view(void)
     BattleScreen v;
     ses_view(&r.s, &v);
 
-    check(v.me_name && strcmp(v.me_name, "喷火龙") == 0, "我方名字 = %s",
+    check(v.me_name && strcmp(v.me_name, "九尾") == 0, "我方名字 = %s",
           v.me_name ? v.me_name : "(null)");
-    check(v.foe_name && strcmp(v.foe_name, "巨金怪") == 0, "对手名字 = %s",
+    check(v.foe_name && strcmp(v.foe_name, "蚊香蛙皇") == 0, "对手名字 = %s",
           v.foe_name ? v.foe_name : "(null)");
     check(v.me_sprite != NULL && v.foe_sprite != NULL, "两边立绘都有");
     check(v.me_lv && strcmp(v.me_lv, "Lv50") == 0, "等级 = %s", v.me_lv);
@@ -729,7 +743,7 @@ static void test_view(void)
 
     /* 换人界面：行文字来自队伍数据。
      *
-     * 但这里那一回合对手用岩崩（岩对火/飞 4 倍）足以把喷火龙直接打倒，
+     * 但这里那一回合对手用冲浪（水对纯火 2 倍）足以把九尾直接打倒，
      * 界面进的是**强制换人**，行序行数都不是「6 只减出战」那套。所以先断言
      * 这条不变式（「出战倒下」与「界面进强制换人」必须同步），行内容则挪到
      * 一份没打过回合的干净存档上断言 —— 不把行号绑在随机结果上。 */
@@ -761,9 +775,9 @@ static void test_view(void)
     check(!ui_state_forced(&clean.s.ui), "自愿换人不是强制换人");
     check(ui_state_count(&clean.s.ui) == TEAM_SIZE - 1,
           "自愿换人列 6-1=5 项（%d）", ui_state_count(&clean.s.ui));
-    check_row(&clean, 0, "水箭龟");
-    check_row(&clean, 1, "妙蛙花");
-    check_row(&clean, 2, "皮卡丘");
+    check_row(&clean, 0, "妙蛙花");
+    check_row(&clean, 1, "火焰鸡");
+    check_row(&clean, 2, "风速狗");
     check(ses_row_text(&clean.s, TEAM_SIZE - 1) == NULL, "越界取行返回 NULL");
 }
 
@@ -779,7 +793,8 @@ static void test_team_screen(void)
     up_(&r);
     check(ui_state_cursor(&r.s.ui) == 0, "再按上回到第 1 项（%d）",
           ui_state_cursor(&r.s.ui));
-    down_(&r);
+    down_(&r);          /* → 第 2 项「开始对战」 */
+    down_(&r);          /* → 第 3 项「队伍配置」 */
     ok_(&r);
     check(ui_state_screen(&r.s.ui) == UI_SCREEN_TEAM, "进入队伍配置（%s）",
           screen_name(ui_state_screen(&r.s.ui)));
@@ -799,8 +814,16 @@ static void test_mega(void)
     start_battle(&r);
 
     Battle *b = ses_battle(&r.s);
+    /*
+     * 默认首发是晴天队的九尾（持木炭），跟 Charizardite X 对不上号 ——
+     * Mega 石要求 base 物种匹配（Mega X 的 base 是 6=喷火龙）。所以这里
+     * 直接把 0 号位换成带 Charizardite X 的喷火龙，再取 active。
+     */
+    BattleMon zard;
+    const uint16_t zard_moves[4] = { 53, 126, 241, 89 };
+    mon_init(&zard, 6, 50, 11, 66, 699, zard_moves);
+    battle_set_mon(b, 0, 0, &zard);
     BattleMon *me = battle_active(b, 0);
-    me->base.item = 699;   /* Charizardite X */
 
     check(ses_player_mega(&r.s, 10034) == 0, "带对石头 → 进化成功");
     check(me->active_pid == 10034, "形态换成 Mega（pid = %u）", me->active_pid);
@@ -830,6 +853,19 @@ static void test_device_path(void)
 
     /* 确定键落在 [447, 1900) 这个窗口里；松开态约 2959（实测值） */
     uint32_t t = 0;
+    /*
+     * 光标默认停在第 1 项「选择队伍」——直接按住确定只会打开选队屏。
+     * 先按一次「下」（mV 300 落在 [150,447) 窗口）把光标挪到第 2 项。
+     */
+    for (int i = 0; i < 60; i++) {
+        ses_poll(&r.s, ++t, 300);       /* 按住「下」 */
+    }
+    for (int i = 0; i < 200; i++) {
+        ses_poll(&r.s, ++t, 2959);      /* 松开 → 短按 */
+    }
+    check(ui_state_cursor(&r.s.ui) == 1, "先按「下」把光标挪到第 2 项（%d）",
+          ui_state_cursor(&r.s.ui));
+
     for (int i = 0; i < 60; i++) {
         ses_poll(&r.s, ++t, 1000);      /* 按住确定 */
     }
@@ -1013,12 +1049,13 @@ static void test_menu_view(void)
     check(ses_menu_view(&r.s, &m), "主菜单要画菜单");
     check(strcmp(m.title, "主菜单") == 0, "标题 = %s", m.title ? m.title : "(null)");
     check(m.big == NULL, "主菜单没有结算大字");
-    check(m.count == 2 && m.rows == 2, "两项、一屏两行（实际 %d/%d）",
+    check(m.count == 3 && m.rows == 3, "三项、一屏三行（实际 %d/%d）",
           m.count, m.rows);
     check(m.selected == 0 && m.top == 0, "光标在第 1 项");
-    check(m.items[0] && strcmp(m.items[0], "开始对战") == 0, "第 1 项 = 开始对战");
-    check(m.items[1] && strcmp(m.items[1], "队伍配置") == 0, "第 2 项 = 队伍配置");
-    check(m.scrollbar == false, "两项不需要滚动条");
+    check(m.items[0] && strcmp(m.items[0], "选择队伍") == 0, "第 1 项 = 选择队伍");
+    check(m.items[1] && strcmp(m.items[1], "开始对战") == 0, "第 2 项 = 开始对战");
+    check(m.items[2] && strcmp(m.items[2], "队伍配置") == 0, "第 3 项 = 队伍配置");
+    check(m.scrollbar == false, "三项不需要滚动条");
     check(m.status_left == NULL, "主菜单状态行左侧留空");
     check(m.status_right && strcmp(m.status_right, ui_screen_hint(UI_SCREEN_MAIN)) == 0,
           "状态行右侧 = 状态机的提示（%s）",
@@ -1028,6 +1065,7 @@ static void test_menu_view(void)
     check(ses_menu_view(&r.s, &m) && m.selected == 1, "▼ 之后光标到第 2 项");
 
     /* ---- 队伍配置：386 项 + 滚动窗口 + 计数 ---- */
+    down_(&r);          /* → 第 3 项「队伍配置」 */
     ok_(&r);
     check(ses_layer(&r.s) == SES_LAYER_MENU, "队伍配置是整屏菜单层");
     check(ses_menu_view(&r.s, &m), "队伍配置要画菜单");
@@ -1213,12 +1251,122 @@ static void test_full_battle(void)
           empty_lines);
 }
 
+/*
+ * 预设队校验器（计划第 E.1 项）。
+ *
+ * kPreset 是手写表，最怕「把 pid 写成了招式的 id」这类笔误 —— 那种错在对局里
+ * 不会崩、也不一定断言得到（pid 恰好也是个合法种族时尤其隐蔽），只会让某只
+ * 宝可梦莫名其妙。所以这里逐只把「装进战斗后的结果」与数据表核对。
+ *
+ * 走 ses_load_preset 而不是直接读静态表：这样验的是**真装好的那只** ——
+ * 连 1-based 的 ev/iv 下标写错（会静默写偏到相邻字段）也能一并抓出来。
+ * 局限：learnset 校验做不了（本项目只含升级招式、极稀疏），只保证招式 id
+ * 存在且四招互不重复，理由见 poke_session.c 的表头注释。
+ */
+static void test_preset_validate(void)
+{
+    printf("\n[预设队校验] 5 支×6 只的种族/特性/道具/性格/努力值/招式都合法\n");
+    Rig r;
+    rig_init(&r, AI_ROOKIE);
+
+    for (int t = 0; t < UI_PRESET_COUNT; t++) {
+        ses_load_preset(&r.s, t);
+        int bad = 0;
+        for (int i = 0; i < TEAM_SIZE; i++) {
+            const BattleMon *m = &r.s.b.me.team[i];
+            if (!species_get(m->base.species_id) ||
+                m->base.ability == 0 || m->base.ability >= ABIL_COUNT ||
+                (m->base.item && !item_get(m->base.item)) ||
+                m->base.nature >= NATURE_COUNT) {
+                bad++;
+            }
+            int ev_sum = 0;
+            for (int k = 0; k < 6; k++) {
+                /* EV 是 uint8_t、上限 255，所以「超上限」靠类型就挡住了；
+                 * 只需验 IV（上限 31）与 EV 总和（竞技规则 510）。 */
+                if (m->base.ey.iv[k] > MAX_IV) {
+                    bad++;
+                }
+                ev_sum += m->base.ey.ev[k];
+            }
+            if (ev_sum > 510) {   /* 单项已够用；总数也按竞技规则封顶 */
+                bad++;
+            }
+            for (int k = 0; k < MOVES_PER_MON; k++) {
+                const MoveDef *md = mv_get(m->move[k]);
+                if (!md || !md->name_cn) {
+                    bad++;
+                }
+                for (int j = 0; j < k; j++) {
+                    if (m->move[k] == m->move[j]) {
+                        bad++;   /* 同一招占两个槽 */
+                    }
+                }
+            }
+        }
+        check(bad == 0, "第 %d 支预设队六只配置全部合法（问题 %d 处）",
+              t + 1, bad);
+    }
+}
+
+/*
+ * 选队 → 开打的整链路（计划第 E.3 项）：不只是界面动了几下，而是
+ * 「选中的那支真的成了我方队伍、开打后首发就是它」。
+ */
+static void test_preset_select(void)
+{
+    printf("\n[选队] 选择队伍 → 换队 → 开打\n");
+    Rig r;
+    rig_init(&r, AI_ROOKIE);
+
+    ok_(&r);   /* 主菜单第 1 项：选择队伍 → 进列表（界面停在列表上等选） */
+    check(ui_state_screen(&r.s.ui) == UI_SCREEN_PRESET, "进入选择队伍（%s）",
+          screen_name(ui_state_screen(&r.s.ui)));
+    check(ui_state_count(&r.s.ui) == UI_PRESET_COUNT, "列表 5 支（%d）",
+          ui_state_count(&r.s.ui));
+    check_row(&r, 0, "晴天队");
+    check_row(&r, 1, "雨天队");
+    check_row(&r, 2, "威吓物攻队");
+
+    down_(&r);
+    down_(&r);
+    check(ui_state_cursor(&r.s.ui) == 2, "光标挪到第 3 支（%d）",
+          ui_state_cursor(&r.s.ui));
+    ok_(&r);   /* 选中第 3 支：只报动作，界面不动 */
+    check(ui_state_screen(&r.s.ui) == UI_SCREEN_PRESET, "选完还停在列表上（%s）",
+          screen_name(ui_state_screen(&r.s.ui)));
+    check(r.s.team_index == 2, "记住玩家选了第 3 支（team_index = %u）",
+          r.s.team_index);
+    check(r.s.b.me.team[0].active_pid == 130, "我方首发已换成暴鲤龙（%u）",
+          r.s.b.me.team[0].active_pid);
+
+    /* 对手也是从五支里抽出来的，不是空队伍 */
+    check(species_get(r.s.b.foe.team[0].active_pid) != NULL,
+          "对手首发来自某支预设队（%u）", r.s.b.foe.team[0].active_pid);
+
+    hold(&r, KEY_OK);   /* 长按返回主菜单 */
+    check(ui_state_screen(&r.s.ui) == UI_SCREEN_MAIN, "长按回主菜单（%s）",
+          screen_name(ui_state_screen(&r.s.ui)));
+
+    down_(&r);          /* 移到「开始对战」 */
+    ok_(&r);
+    play_log(&r);
+    check(ses_phase(&r.s) == SES_PHASE_INPUT, "开打后停在等输入（%s）",
+          phase_name(ses_phase(&r.s)));
+    check(r.s.b.me.active == 0 && r.s.b.me.team[0].active_pid == 130,
+          "开打后我方首发仍是暴鲤龙（%u）", r.s.b.me.team[0].active_pid);
+    check(find_log(&r.s, "暴鲤龙") >= 0, "开场日志里有暴鲤龙：%s",
+          ses_log_at(&r.s, (uint32_t)find_log(&r.s, "暴鲤龙")));
+}
+
 int main(void)
 {
     printf("会话层自检（把状态机接到引擎）\n");
     printf("==============================\n");
 
     test_init();
+    test_preset_validate();
+    test_preset_select();
     test_intro();
     test_first_turn();
     test_menu_model();

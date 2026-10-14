@@ -326,13 +326,18 @@ static int selfcheck(void)
     CK(ses_phase(&g_app.ses) == SES_PHASE_MAIN,
        "开局在主菜单（阶段 %d）", (int)ses_phase(&g_app.ses));
 
-    /* ① 短按确定 → 开始对战，进日志播放 */
+    /* ① 光标默认停在主菜单第 1 项「选择队伍」，先按「下」挪到「开始对战」 */
+    sim_tap(KEY_DOWN);
+    CK(ui_state_cursor(&g_app.ses.ui) == 1,
+       "按「下」把光标挪到第 2 项（%d）", (int)ui_state_cursor(&g_app.ses.ui));
+
+    /* ② 短按确定 → 开始对战，进日志播放 */
     sim_tap(KEY_OK);
     CK(ses_phase(&g_app.ses) == SES_PHASE_LOG,
        "短按确定 → 开始对战并进日志播放（阶段 %d）",
        (int)ses_phase(&g_app.ses));
 
-    /* ② 长按确定 → 一次跳过整段开场日志 → 等我方输入 */
+    /* ③ 长按确定 → 一次跳过整段开场日志 → 等我方输入 */
     sim_hold(KEY_OK, KEY_LONG_PRESS_MS + 200);
     CK(ses_phase(&g_app.ses) == SES_PHASE_INPUT,
        "长按确定 → 跳过日志并转入等我方输入（阶段 %d）",
@@ -342,7 +347,7 @@ static int selfcheck(void)
     CK(ses_log_index(&g_app.ses) + 1 >= 1, "日志游标已推进到第 %u 条",
        (unsigned)ses_log_index(&g_app.ses) + 1);
 
-    /* ③ 出一招：回合真的往前走了 */
+    /* ④ 出一招：回合真的往前走了 */
     uint16_t turn0 = g_app.ses.b.turn;
     sim_tap(KEY_OK);
     CK(ses_phase(&g_app.ses) == SES_PHASE_LOG ||
@@ -353,7 +358,7 @@ static int selfcheck(void)
        (unsigned)turn0, (unsigned)g_app.ses.b.turn);
 
     /*
-     * ④ 换人路径。出招后可能落在三种界面之一：正常等输入（战斗界面）、
+     * ⑤ 换人路径。出招后可能落在三种界面之一：正常等输入（战斗界面）、
      * 出战那只濒死了要强制换人（换人界面）、或者分出胜负（结算）。
      * 三者都是对的，但不能是别的 —— 更不能还停在日志播放。
      */
@@ -366,7 +371,7 @@ static int selfcheck(void)
            "输入阶段的界面是战斗或换人（界面 %d）", (int)sc);
     }
 
-    /* ⑤ 强制换人：长按在这里**没有退路**，只能选一只 */
+    /* ⑥ 强制换人：长按在这里**没有退路**，只能选一只 */
     if (ph == SES_PHASE_INPUT && sc == UI_SCREEN_SWITCH) {
         sim_tap(KEY_OK);   /* 选列表第 1 只 */
         if (ses_phase(&g_app.ses) == SES_PHASE_LOG) {
@@ -378,7 +383,7 @@ static int selfcheck(void)
            (int)ses_phase(&g_app.ses), (int)ui_state_screen(&g_app.ses.ui));
     }
 
-    /* ⑥ 战斗界面上的整条导航链：长按开弹层 → 进换人 → 长按退回 */
+    /* ⑦ 战斗界面上的整条导航链：长按开弹层 → 进换人 → 长按退回 */
     if (ses_phase(&g_app.ses) == SES_PHASE_INPUT &&
         ui_state_screen(&g_app.ses.ui) == UI_SCREEN_BATTLE) {
 

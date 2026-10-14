@@ -502,11 +502,30 @@ int main(void)
     ok(item_type_boost(227, TYPE_DRAGON) == 120, "龙之牙使龙招 +20%", "");
 
     /* ---------- 道具：能力值增强 ---------- */
+    /*
+     * 加成已统一到 calc_stat（直接查 item_get 的数据表），
+     * 不再是 poke_item.c 里无人调用的 item_stat_boost。
+     * 所以这里直接验 calc_stat 的产物，避免「同一概念两处实现」再漂移。
+     */
     printf("\n[道具] 粗骨头/电气球使能力翻倍\n");
-    ok(item_stat_boost(235, 2) == 200, "粗骨头攻击翻倍", "");
-    ok(item_stat_boost(235, 3) == 100, "粗骨头不影响防御", "");
-    ok(item_stat_boost(213, 4) == 200, "电气球特攻翻倍", "");
-    ok(item_stat_boost(204, 5) == 200, "深海鳞片特防翻倍", "");
+    {
+        Statsheet st;
+        statsheet_init(&st, 143, 50, 0);   /* 卡比兽：攻110 防65 特攻65 特防110 */
+        uint16_t atk0 = calc_stat(&st, 2);
+        uint16_t def0 = calc_stat(&st, 3);
+        uint16_t spa0 = calc_stat(&st, 4);
+        uint16_t spd0 = calc_stat(&st, 5);
+
+        st.item = 235; /* 粗骨头 */
+        ok_u16(calc_stat(&st, 2), (uint16_t)(atk0 * 2), "粗骨头攻击翻倍");
+        ok_u16(calc_stat(&st, 3), def0, "粗骨头不影响防御");
+
+        st.item = 213; /* 电气球 */
+        ok_u16(calc_stat(&st, 4), (uint16_t)(spa0 * 2), "电气球特攻翻倍");
+
+        st.item = 204; /* 深海鳞片 */
+        ok_u16(calc_stat(&st, 5), (uint16_t)(spd0 * 2), "深海鳞片特防翻倍");
+    }
 
     /* ---------- 道具：会心 ---------- */
     printf("\n[道具] 焦点镜片提升会心率\n");

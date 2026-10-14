@@ -58,6 +58,52 @@ def read(rel):
     return p.read_text(encoding="utf-8") if p.exists() else ""
 
 
+def enum_ints(text):
+    """解析源码里所有 enum 块，返回 {成员名: 值}（支持 `= N` 与隐式递增）。"""
+    out = {}
+    for block in re.findall(r"enum\s*\{(.*?)\}\s*[A-Za-z_]*\s*;", text, re.S):
+        block = re.sub(r"/\*.*?\*/", "", block, flags=re.S)
+        block = re.sub(r"//[^\n]*", "", block)
+        cur = 0
+        for part in block.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if "=" in part:
+                name, _, val = part.partition("=")
+                name = name.strip()
+                try:
+                    cur = int(val.strip())
+                except ValueError:
+                    continue
+            else:
+                name = part
+            if re.fullmatch(r"[A-Za-z_]\w*", name):
+                out.setdefault(name, cur)
+            cur += 1
+    return out
+
+
+def resolve_int(expr, *texts):
+    """把 ui_screen_rows 的返回表达式解析成整数。
+
+    行数现在写成 UI_MAIN_COUNT / UI_PRESET_COUNT 这类符号常量（菜单加项时
+    只改一处、不各抄一份），所以这里要能解 #define 与 enum 成员，不能只认
+    裸数字 —— 只认数字的话这两屏会被误报成「没有返回值」。
+    """
+    if expr.isdigit():
+        return int(expr)
+    for t in texts:
+        m = re.search(rf"#define\s+{re.escape(expr)}\s+(\d+)", t)
+        if m:
+            return int(m.group(1))
+    for t in texts:
+        v = enum_ints(t).get(expr)
+        if v is not None:
+            return v
+    return None
+
+
 
 # ---- 各组测试的二进制名单（顺序即 README 表格的顺序）----
 TEST_NAMES = [
@@ -490,16 +536,24 @@ def main():
     # 光标移到了看得见、内容画不出来，这种 bug 只能靠两边对数抓。
     m = re.search(r"#define\s+UI_MENU_ROWS_MAX\s+(\d+)", uh)
     rows_max = int(m.group(1)) if m else 0
-    rows_map = dict(re.findall(
-        r"case\s+(UI_SCREEN_\w+):\s*return\s+(\d+);", us))
+    ush = read("src/poke_ui_state.h")
+    # 只看 ui_screen_rows 本体：count_of 里也有同样的 case 标签，混进来会污染
+    fn = re.search(r"int\s+ui_screen_rows\s*\([^)]*\)\s*\{(.*?)\n\}", us, re.S)
+    fnbody = fn.group(1) if fn else ""
+    rows_map = {}
+    for name, expr in re.findall(
+            r"case\s+(UI_SCREEN_\w+):\s*return\s+([A-Za-z_]\w*|\d+);", fnbody):
+        v = resolve_int(expr, ush, uh)
+        if v is not None:
+            rows_map[name] = v
     # ui_screen_rows 的 default 分支兜底成 1，不在 map 里；有枚举名却没有
     # return 的才算漏
-    screens_in_fn = set(re.findall(r"case\s+(UI_SCREEN_\w+):", us))
+    screens_in_fn = set(re.findall(r"case\s+(UI_SCREEN_\w+):", fnbody))
     missing = sorted(screens_in_fn - set(rows_map))
     check(bool(rows_map) and not missing,
           f"ui_screen_rows 的每个界面都有返回值（缺 {missing or '无'}）")
     if rows_map:
-        want_max = max(int(v) for v in rows_map.values())
+        want_max = max(rows_map.values())
         check(rows_max >= want_max,
               f"UI_MENU_ROWS_MAX = {rows_max} 装得下最大界面 {want_max} 行")
 

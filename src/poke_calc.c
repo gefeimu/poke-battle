@@ -163,6 +163,17 @@ uint16_t calc_stat(const Statsheet *s, uint8_t stat_idx)
     /* 性格 */
     v = apply_nature((uint16_t)v, s->nature, stat_idx);
 
+    /*
+     * 携带道具的能力值加成（粗骨头/电气球等固定翻倍类）。
+     * **只查数据表**（item_get），不依赖 poke_item.c 的 item_stat_boost ——
+     * calc 层保持纯计算、可独立单测。以前这个加成只有 item_stat_boost
+     * 一处实现、无人调用，等于道具白带；现在统一由这里承担。
+     */
+    const ItemDef *it = item_get(s->item);
+    if (it && it->boost_stat == stat_idx && it->stat_amount > 0) {
+        v = v * (uint32_t)(100 + it->stat_amount) / 100;
+    }
+
     if (v > 999) v = 999;
     if (v < 1) v = 1;
     return (uint16_t)v;

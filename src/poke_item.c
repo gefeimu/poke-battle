@@ -77,18 +77,6 @@ uint16_t item_type_boost(uint16_t item_id, uint8_t move_type)
     return 100;
 }
 
-uint16_t item_stat_boost(uint16_t item_id, uint8_t stat_idx)
-{
-    const ItemDef *it = item_get(item_id);
-    if (!it || it->boost_stat == 0) {
-        return 100;
-    }
-    if (it->boost_stat == stat_idx) {
-        return (uint16_t)(100 + it->stat_amount);
-    }
-    return 100;
-}
-
 int item_crit_stage(uint16_t item_id)
 {
     const ItemDef *it = item_get(item_id);
@@ -146,6 +134,25 @@ void item_on_deal_damage(Battle *b, int attacker_is_foe, uint16_t dmg)
         log_add(&b->log, "%s 靠 %s 回复了 %u 点 HP！",
                 attacker_is_foe ? b->foe.name : b->me.name,
                 item_name(atk->base.item), amount);
+    }
+    /* 反伤类道具（粘性钩等）：携带者造成伤害时按比例反噬自身 */
+    if (it->chip_pct > 0) {
+        uint16_t recoil = (uint16_t)((uint32_t)dmg * it->chip_pct / 100);
+        if (recoil < 1) {
+            recoil = 1;
+        }
+        if (recoil >= atk->cur_hp) {
+            atk->cur_hp = 0;
+            atk->alive = false;
+            log_add(&b->log, "%s 被 %s 反噬，倒下了！",
+                    attacker_is_foe ? b->foe.name : b->me.name,
+                    item_name(atk->base.item));
+        } else {
+            atk->cur_hp = (uint16_t)(atk->cur_hp - recoil);
+            log_add(&b->log, "%s 被 %s 反噬，受到 %u 点伤害！",
+                    attacker_is_foe ? b->foe.name : b->me.name,
+                    item_name(atk->base.item), recoil);
+        }
     }
 }
 

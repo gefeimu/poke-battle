@@ -283,6 +283,7 @@ static void play_log(Rig *r)
 /* 从主菜单开局并放完开场日志 */
 static void start_battle(Rig *r)
 {
+    down_(r);   /* 光标从第 1 项「选择队伍」移到第 2 项「开始对战」 */
     ok_(r);
     play_log(r);
 }
@@ -365,12 +366,16 @@ static SesLayer prep(const char *name, Rig *r, BattleScreen *bs, MenuScreen *ms,
 
     if (strcmp(name, "main") == 0) {
         /* 开局就在主菜单，什么都不用按 */
+    } else if (strcmp(name, "preset") == 0) {
+        ok_(r);                    /* 主菜单第 1 项「选择队伍」→ 五支预设队列表 */
     } else if (strcmp(name, "team") == 0) {
-        /* 主菜单第 2 项才是「队伍配置」：▼ 移光标（作用在 PRESS 上），
+        /* 主菜单第 3 项才是「队伍配置」：▼ 移光标（作用在 PRESS 上），
          * 再确定进入。**只按 ▼ 不会进界面** —— 光标移动不改变当前屏。 */
+        down_(r);
         down_(r);
         ok_(r);
     } else if (strcmp(name, "log") == 0) {
+        down_(r);                  /* 移到第 2 项「开始对战」 */
         ok_(r);                    /* 开始对战 → 开场日志，只放到第一条 */
     } else if (strcmp(name, "action") == 0) {
         start_battle(r);
@@ -403,6 +408,7 @@ static SesLayer prep(const char *name, Rig *r, BattleScreen *bs, MenuScreen *ms,
     /* 校验：确实走到了预期的那一屏 */
     UiScreen want, got = ui_state_screen(&r->s.ui);
     if (strcmp(name, "main") == 0)        { want = UI_SCREEN_MAIN; }
+    else if (strcmp(name, "preset") == 0) { want = UI_SCREEN_PRESET; }
     else if (strcmp(name, "team") == 0)   { want = UI_SCREEN_TEAM; }
     else if (strcmp(name, "log") == 0)    { want = UI_SCREEN_BATTLE; }
     else if (strcmp(name, "action") == 0) { want = UI_SCREEN_ACTION; }
@@ -426,7 +432,8 @@ static SesLayer prep(const char *name, Rig *r, BattleScreen *bs, MenuScreen *ms,
 /* ================================================================ main */
 
 static const char *const kScreens[] = {
-    "main", "team", "log", "battle", "action", "confirm", "switch", "result",
+    "main", "preset", "team", "log", "battle", "action", "confirm", "switch",
+    "result",
 };
 #define SCREEN_COUNT ((int)(sizeof(kScreens) / sizeof(kScreens[0])))
 
