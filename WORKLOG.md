@@ -54,7 +54,7 @@ git config --local --get user.email   # → baiguiyeyou@outlook.com
 ```
 
 - 远端：`https://github.com/gefeimu/poke-battle.git`（`origin`，分支 `main`）
-- 当前 HEAD：`f37cc7a`，本地领先 `origin/main` 3 个提交（未推送），本地共 **18 个提交**
+- 当前 HEAD：`0a9873f`，本地领先 `origin/main` 7 个提交（未推送），本地共 **22 个提交**
 - **新建/克隆仓库后第一件事**：`git config --local user.name/user.email` 改对，
   否则提交者身份是错的，事后改历史非常麻烦。
 
