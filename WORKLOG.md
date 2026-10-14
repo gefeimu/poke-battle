@@ -54,7 +54,7 @@ git config --local --get user.email   # → baiguiyeyou@outlook.com
 ```
 
 - 远端：`https://github.com/gefeimu/poke-battle.git`（`origin`，分支 `main`）
-- 当前 HEAD：`89f7c9e`，与 `origin/main` 同步，共 **15 个提交**
+- 当前 HEAD：`f37cc7a`，本地领先 `origin/main` 3 个提交（未推送），本地共 **18 个提交**
 - **新建/克隆仓库后第一件事**：`git config --local user.name/user.email` 改对，
   否则提交者身份是错的，事后改历史非常麻烦。
 
@@ -148,7 +148,10 @@ f479d70  ui: 「HP」标签嵌进血条，血条框再压紧
 54a4873  ui: 认输加一道二次确认界面
 4facb4e  session+ui: 会话层接引擎，菜单七屏绘制，克制表改由官方 CSV 生成
 a2ff28e  play: 加 PC 试玩窗口（make play）——硬件到手前先能上手打一局
-89f7c9e  fix: 能力值公式/等级倍率/性格三处错值，并给数值模型加外部已知值回归   ← HEAD
+89f7c9e  fix: 能力值公式/等级倍率/性格三处错值，并给数值模型加外部已知值回归
+85cb79e  bench: 加多队伍 AI 对战基准（档位/风格矩阵 + 大样本胜率），对局脚手架与 test_ai 共用
+59eaf9d  fix: 修正 ai_choose 兜底块的缩进与损坏注释字符
+f37cc7a  fix: 统一 test/ai_arena.h 的随机源（改走 battle_rng_state），消除 AI vs AI 的随机流耦合   ← HEAD
 ```
 
 ---
