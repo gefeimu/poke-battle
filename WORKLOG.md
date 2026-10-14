@@ -20,7 +20,7 @@
 | 屏幕 | 240×320 RGB565，官方固件是 **9.6 KB 条纹缓冲**（不是全屏帧缓冲） |
 | 输入 | **三个键共用一个 ADC 引脚**（电压分档），自己写驱动，不用官方按键组件 |
 | 当前状态 | 核心链路**全部打通**，PC 上能玩整局；剩队伍配置 / NVS 存档 / 接官方 BSP |
-| 质量基线 | **951 项断言全过、17 组一致性检查 0 处不一致、零编译警告** |
+| 质量基线 | **983 项断言全过、17 组一致性检查 0 处不一致、零编译警告** |
 | 最先要看的文件 | `README.md`（全景）→ `src/poke_session.c`（把各层串起来的地方） |
 | 最先要跑的命令 | `make test`（一键全测） / `make play`（开窗口试玩） |
 
@@ -77,11 +77,11 @@ git config --local --get user.email   # → baiguiyeyou@outlook.com
 | `data_selfcheck` | 110 | `test_font` | 25 |
 | `test_calc` | 131 | `test_render` | 97 |
 | `test_battle` | 100 | `test_input` | 51 |
-| `test_ai` | 19 | `test_ui` | 118 |
-| `test_sprites` | 14 | `test_session` | 286 |
-| | | **合计** | **951** |
+| `test_ai` | 19 | `test_ui` | 125 |
+| `test_sprites` | 14 | `test_session` | 311 |
+| | | **合计** | **983** |
 
-- `make test` → 951 项全过，零编译警告
+- `make test` → 983 项全过，零编译警告
 - `make check-consistency` → **17 组跨文件检查，0 处不一致**
 - `make play-check` → PC 试玩窗口无头自检 15/15
 
@@ -179,7 +179,7 @@ docs/    数据源说明、第三方素材
 | `poke_item.c/h` | 道具系统 |
 | `poke_ai.c/h` | 三层 AI（L1 启发式 / L2 2-ply / L3 蒙特卡洛） |
 | `poke_render.c/h` | 渲染层：绘制原语 + 精灵图 + 位图字体 |
-| `poke_ui.c/h` | 界面绘制：战斗界面 + 菜单界面（七屏） |
+| `poke_ui.c/h` | 界面绘制：战斗界面 + 菜单界面（八屏） |
 | `poke_ui_state.c/h` | 界面状态机：界面栈 / 光标 / 滚动 / 连发 / 动作上报 |
 | `poke_input.c/h` | 三键驱动：键位锁 + 去抖 + 短按/长按 |
 | `poke_session.c/h` | 会话层：按键 → 状态机 → 引擎 → 一屏数据（把上面全串起来） |
@@ -319,7 +319,63 @@ make lvgl-font FONT=data/fonts/SmileSans-Oblique.ttf   # 重新生成中文字�
 
 ---
 
-## 9. 环境事实速查（硬件侧）
+## 9. 五支预设队伍与「选择队伍」界面（2026-10-14 本轮）
+
+本轮目标：给玩家 **5 支主流预设队**（性格 + 努力值 + 个体值 + 道具全套），
+主菜单新增「选择队伍」入口，对手从 5 支预设队里随机抽；顺带接通引擎里遗留的道具死钩子。
+
+预设队（`src/poke_session.c` 的 `kPreset[UI_PRESET_COUNT][TEAM_SIZE]`，均为 Lv50 / 6v6）：
+
+| # | 队名 | 思路 |
+|---|---|---|
+| 1 | 晴天队 | 九尾（日照）开天气 → 输出手收尾 |
+| 2 | 雨天队 | 大嘴鸥（降雨）开天气 → 水系特攻 |
+| 3 | 威吓物攻队 | 威吓压制 + 物理强攻 |
+| 4 | 高速特攻队 | 先手速度线 + 特攻炮台 |
+| 5 | 肉盾消耗队 | 高耐久 + 消耗 / 回复 |
+
+改动清单（22 个文件）：
+
+```
+ M src/poke_session.c/h  （SesMonSpec 扩展 + 5 队表 + 随机对手 + 选队动作）
+ M src/poke_ui_state.c/h （UI_SCREEN_PRESET / 主菜单三项 / UI_ACT_PICK_TEAM / UI_PRESET_COUNT）
+ M src/poke_item.c/h     （接通道具钩子：能力固定翻倍 / 免疫 / 先制之爪 / 反伤）
+ M src/poke_calc.c       （道具参与能力值计算）
+ M src/poke_battle.c     （道具钩子接入战斗回合）
+ M test/test_session.c   （预设队校验器 + 选队后开打 + 修 test_mega / test_device_path）
+ M test/test_ui.c        （选队界面自检）
+ M test/test_battle.c    （道具钩子断言）
+ M test/play_pc.c        （selfcheck 补一次主菜单导航）
+ M test/dump_screen.c    （新增 preset 屏 + 导航适配）
+ M tools/check_consistency.py（解析 #define / enum 符号常量）
+ M gen/font_chars.txt + gen/font_app_12.c + gen/font_app_16.c
+                         + gen/poke_font_data.c/h（补「肉」「耗」并重生成 LVGL 字体）
+ M Makefile              （SCRIPTS_SCREENS 加 preset；注释「七屏」→「八屏」）
+ M README.md / WORKLOG.md（断言计数 951 → 983 同步）
+```
+
+**根因与教训**：
+
+1. **kPreset 四只特性数值笔误**：九尾 `66`、圈圈熊 `59`、巨钳螳螂 `104`、大力鳄 `63`
+   —— 都不是对应特性（应为 `70` DROUGHT / `62` GUTS / `101` TECHNICIAN / `67` TORRENT）。
+   用 `gen/poke_abilities.c` 权威核对逐个排查抓出。**教训：`AbilityKind` 枚举值 == Veekun ability id，
+   配队数据必须按 id 逐个核，不能凭记忆写。**
+2. **主菜单 2 项 → 3 项，打翻一批「光标 0 = 开始对战」的旧断言**：`test_device_path` 与
+   `play_pc` 的 `selfcheck` 都假设开局光标停在「开始对战」，加「选择队伍」后按住确定只会开选队屏。
+   修法都是在开局前补一次「下」。**教训：默认光标位置是界面契约的一部分，改菜单顺序要全仓搜依赖它的断言。**
+3. **新屏文案带出 2 个缺字**：队5「肉盾消耗队」用到「肉」(U+8089)、「耗」(U+8017)，
+   `dump_screen` 全屏覆盖校验（problems=0）抓出；补进 `gen/font_chars.txt` 后重生成 LVGL 字体。
+4. **一致性检查误报**：第 16 组原来只认数字 `case`，而 `ui_screen_rows()` 现在返回
+   `UI_MAIN_COUNT` / `UI_PRESET_COUNT` 这类符号常量 → 给 checker 加 `#define` / `enum` 解析。
+5. **`test_mega` 前提变了**：默认首发由喷火龙变成九尾，而 Charizardite X 的 Mega 石与九尾物种不匹配
+   —— 改成把 0 号位换成喷火龙再测。
+
+**验证**：`make test` → 983 项全过 / 17 组 0 处不一致 / 零警告；
+`make play-check` → 15/15；`dump_screen` 八屏覆盖校验 problems=0。
+
+---
+
+## 10. 环境事实速查（硬件侧）
 
 来自官方仓 `github.com/FoloToy/ai-passport`（MIT）的**已查证事实**，早期版本全估错过：
 
