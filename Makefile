@@ -75,7 +75,7 @@ BUILD = build
 TESTS = data_selfcheck test_calc test_battle test_ai test_sprites test_font \
         test_render test_input test_ui test_session
 
-.PHONY: all test check-consistency bench types sprites sprites-preview \
+.PHONY: all test check-consistency bench types stat-golden sprites sprites-preview \
         font lvgl-font lvgl-font-to-c font-preview readme-images \
         screen-preview render-compare play play-check clean
 
@@ -87,7 +87,10 @@ $(BUILD):
 $(BUILD)/data_selfcheck: test/data_selfcheck.c $(SRC_DATA) | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) -o $@ $< $(SRC_DATA)
 
-$(BUILD)/test_calc: test/test_calc.c $(SRC) | $(BUILD)
+# 依赖 gen/poke_stat_golden.h 是必须的：改了 tools/stat_formula.py 再跑
+# make stat-golden 只会换掉那个头文件，test_calc.c 本身没动 —— 不显式依赖
+# 的话 make 认为无需重编，测试就还在拿旧期望值断言（生成物与测试对不上）。
+$(BUILD)/test_calc: test/test_calc.c gen/poke_stat_golden.h $(SRC) | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) $(TESTFLAGS) -o $@ $< $(SRC)
 
 $(BUILD)/test_battle: test/test_battle.c $(SRC) | $(BUILD)
@@ -154,6 +157,13 @@ bench: $(BUILD)/bench_ai
 
 types:
 	python tools/regen_types.py
+
+# 能力值 / 等级倍率 / 性格的回归锚点。期望值手写在 tools/stat_formula.py
+# （游戏外可查的已知值），这里只把它们写成 C 头文件供 test_calc 引用。
+# 改过 stat_formula.py 一定要重跑这条，否则测试还在拿旧期望值断言
+# （check_consistency 第 17 组会比对文件与生成器输出，忘了就会红）。
+stat-golden:
+	python tools/gen_stat_golden.py
 
 # 把固件里的精灵图导成 PNG 肉眼检查画质。
 # 精灵图的 bug（位深错、色表截断）光看代码发现不了，必须看图。

@@ -540,9 +540,17 @@ static void test_levels_differ(void)
         AIConfig rookie_cfg, expert_cfg;
         ai_config_default(&rookie_cfg, AI_ROOKIE);
         ai_config_default(&expert_cfg, AI_EXPERT);
-        rng_reset();
+        /*
+         * 每轮换种子。这里**不能**每轮都 rng_reset()：ROOKIE 的 15% 失手是
+         * 靠 battle_rng() 抽签的，固定种子意味着 60 轮读到的是同一个数 ——
+         * 抽不中就 60 轮全不抽中，这条断言于是悄悄退化成「L1 与搜索是否
+         * 一致」（那件事由上面的差分测试专门负责，且它用的是另一组局面）。
+         * 同一轮内两边用同一个种子，比较才是同题对比。
+         */
+        uint32_t seed_t = 0x12345678u + (uint32_t)t * 2654435761u;
+        s_rng = seed_t;
         ai_choose(&b, 0, &rookie_cfg, &r);
-        rng_reset();
+        s_rng = seed_t;
         ai_choose(&b, 0, &expert_cfg, &e);
         if (r.is_switch != e.is_switch || r.slot != e.slot) {
             rookie_diff++;

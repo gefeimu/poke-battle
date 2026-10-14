@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # （用 `python tools/gen_gen3_data.py` 运行时脚本目录不一定已注册）
 if str(ROOT / "tools") not in sys.path:
     sys.path.insert(0, str(ROOT / "tools"))
-from zh_names import load_names
+from zh_names import load_names, load_names_by_en
 import type_chart
 CSV = ROOT / "data" / "csv"
 GEN = ROOT / "gen"
@@ -1146,17 +1146,63 @@ def emit_abilities(abilities):
 
 
 def emit_natures():
-    # Nature: id -> (increased_stat, decreased_stat)，0=无修正
-    # stat 顺序: hp(1) atk(2) def(3) spa(4) spd(5) spe(6)
-    NATURES = {
-        1:("hardy",0,0), 2:("lonely",2,3), 3:("brave",2,6), 4:("adamant",2,5),
-        5:("naughty",2,4), 6:("bold",3,2), 7:("docile",0,0), 8:("relaxed",3,6),
-        9:("impish",3,5), 10:("lax",3,4), 11:("timid",6,2), 12:("hasty",6,3),
-        13:("serious",0,0), 14:("jolly",6,4), 15:("naive",6,5), 16:("modest",4,2),
-        17:("mild",4,3), 18:("quiet",4,6), 19:("bashful",0,0), 20:("rash",4,5),
-        21:("calm",5,2), 22:("gentle",5,3), 23:("sassy",5,6), 24:("careful",5,4),
-        25:("quirky",0,0),
+    """
+    性格表。
+
+    id 顺序沿用**游戏内顺序**（1=hardy 2=lonely 3=brave ...）：玩家熟悉，
+    且 test/data_selfcheck.c 与 test_calc.c 都按这个顺序写的断言。
+
+    注意 Veekun 的 nature_id 是**另一套顺序**（1=hardy 2=bold 3=modest ...），
+    所以中文名不能按 id 取，要按英文名配对（zh_names.load_names_by_en）。
+    曾经按 id 取，25 个中文名错了 24 个 —— 而 data_selfcheck 又照着错值
+    写了断言，于是「数据错、断言也错、测试全绿」。
+
+    另一处错在 (increased, decreased)：adamant/naughty/impish/lax 四个性格
+    的「-特攻」被写成了「-特防」（spa/spd 序号写反），于是固执性格降的是
+    特防。这个错误影响实战胜负，不只是显示。
+
+    stat 序号：hp(1) atk(2) def(3) spa(4) spd(5) spe(6)
+    """
+    # 英文名 -> (increased, decreased)。权威值，逐条与官方资料核对。
+    NATURE_EFFECT = {
+        "hardy":   (0, 0), "lonely":  (2, 3), "brave":   (2, 6),
+        "adamant": (2, 4), "naughty": (2, 5),
+        "bold":    (3, 2), "docile":  (0, 0), "relaxed": (3, 6),
+        "impish":  (3, 4), "lax":     (3, 5),
+        "timid":   (6, 2), "hasty":   (6, 3), "serious": (0, 0),
+        "jolly":   (6, 4), "naive":   (6, 5),
+        "modest":  (4, 2), "mild":    (4, 3), "quiet":   (4, 6),
+        "bashful": (0, 0), "rash":    (4, 5),
+        "calm":    (5, 2), "gentle":  (5, 3), "sassy":   (5, 6),
+        "careful": (5, 4), "quirky":  (0, 0),
     }
+    # id -> 英文名。**改动这里等于改存档语义**（kNatures 的下标就是它）。
+    NATURE_ORDER = {
+        1: "hardy", 2: "lonely", 3: "brave", 4: "adamant", 5: "naughty",
+        6: "bold", 7: "docile", 8: "relaxed", 9: "impish", 10: "lax",
+        11: "timid", 12: "hasty", 13: "serious", 14: "jolly", 15: "naive",
+        16: "modest", 17: "mild", 18: "quiet", 19: "bashful", 20: "rash",
+        21: "calm", 22: "gentle", 23: "sassy", 24: "careful", 25: "quirky",
+    }
+    assert len(NATURE_ORDER) == 25, "性格顺序表应恰好 25 项"
+    assert set(NATURE_ORDER.values()) == set(NATURE_EFFECT), \
+        "性格顺序表与效果表的英文名对不上"
+
+    # 自检：升/降各自恰好覆盖 atk..spe 五项；同一性格的升降项不能相同。
+    ups = sorted({v[0] for v in NATURE_EFFECT.values() if v[0]})
+    downs = sorted({v[1] for v in NATURE_EFFECT.values() if v[1]})
+    assert ups == [2, 3, 4, 5, 6] and downs == [2, 3, 4, 5, 6], \
+        f"性格升/降项覆盖异常：+{ups} -{downs}"
+    for n, (inc, dec) in NATURE_EFFECT.items():
+        if inc == 0 and dec == 0:
+            continue                      # 5 个中性性格（(0,0)）本来就没有升降
+        assert inc != dec, f"{n} 的升降项相同"
+        assert inc != 0 and dec != 0, f"{n} 只写了一边（+{inc} -{dec}）"
+
+    cn_by_en = load_names_by_en("natures")
+    missing = [n for n in NATURE_ORDER.values() if n not in cn_by_en]
+    assert not missing, f"这些性格在 nature_names.csv 里没有中文名：{missing}"
+
     lines = [
         "/* 由 tools/gen_gen3_data.py 自动生成 */",
         "#ifndef POKE_NATURES_H",
@@ -1188,12 +1234,14 @@ def emit_natures():
     # 所以第1 项必须占住 index 0（曾漏掉这行导致整表错位一格）。
     lines.append('    { 0, 0, "neutral", "无"},  /* nature 0 */')
     for nid in range(1, 26):
-        name, inc, dec = NATURES[nid]
-        cn = zh_natures.get(nid, "").replace('"', '\\"')
+        name = NATURE_ORDER[nid]
+        inc, dec = NATURE_EFFECT[name]
+        cn = cn_by_en[name].replace('"', '\\"')
         lines.append(f'    {{ {inc}, {dec}, "{name}", "{cn}" }},'
                      f'  /* nature {nid} */')
     lines += ["};", ""]
     (GEN / "poke_natures.c").write_text("\n".join(lines), encoding="utf-8")
+
 
 
 # ============================================================

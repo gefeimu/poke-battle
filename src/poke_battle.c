@@ -562,15 +562,20 @@ static int do_move(Battle *b, int attacker_is_foe)
     log_add(&b->log, "%s 使用了 %s！", atk_side->name, mv_name(mv));
 
     /* ---- 命中判定 ---- */
-    /* accuracy 0 = 必中。命中率受双方命中/闪避等级影响（每级 ±0.33 倍）。 */
+    /* accuracy 0 = 必中。命中率受双方命中/闪避等级影响：净值 ±6 封顶，
+     * 每级用 base=3 的倍率（+1 是 4/3 倍，不是能力值那套 3/2）。
+     * 走 calc_stage_ratio，与能力值等级共用一份实现 —— 这里过去是另一段
+     * 内联公式，两套并存，能力值那套还整张表都错。 */
     if (mv->accuracy && mv->accuracy < 100) {
         int acc = mv->accuracy;
         int acc_stage = atk->stage_acc - def->stage_eva;
-        if (acc_stage > 0) {
-            acc = acc * (3 + acc_stage) / 3;
-        } else if (acc_stage < 0) {
-            acc = acc * 3 / (3 - acc_stage);
+        if (acc_stage > MAX_STAGE) {
+            acc_stage = MAX_STAGE;
         }
+        if (acc_stage < -MAX_STAGE) {
+            acc_stage = -MAX_STAGE;
+        }
+        acc = calc_stage_ratio((uint16_t)acc, (int8_t)acc_stage, 3);
         if (acc > 100) {
             acc = 100;
         }
@@ -594,13 +599,24 @@ static int do_move(Battle *b, int attacker_is_foe)
     }
 
     /* ---- 伤害招式 ---- */
-    /* 暴击：第六代基础 1/16，招式 crit_rate 每级翻倍 */
+    /*
+     * 暴击率按官方档位查表（千分比），**不要再用 63*(1<<stage) 近似翻倍**。
+     *
+     * 那个近似在 stage=2 就偏（25.2% 而官方是 50%），到 stage=4 更直接变成
+     * 1008/1000 > 1 —— 判定写作 `rng%1000 < crit_pct`，于是**恒真**，
+     * 注释却还写着「上限 4 级（约 50%）」。两者自相矛盾，而高暴击招 +
+     * 暴击道具刚好能凑到 4 级：那是一定暴击，不是约一半。
+     *
+     * 官方档位（Gen VI/VII）：0 级 1/16、+1 级 1/8、+2 级 1/2、+3 级起必定
+     * 暴击。所以封顶取 3，并且第 3 档就是 1000‰ 的「必暴」。
+     */
+    static const uint16_t kCritPct[4] = {63, 125, 500, 1000}; /* stage 0..3 */
     int crit_stage = (mv->crit_rate >= 1) ? mv->crit_rate : 0;
     crit_stage += item_crit_stage(atk->base.item);
-    if (crit_stage > 4) {
-        crit_stage = 4; /* 上限 4 级（约 50%） */
+    if (crit_stage > 3) {
+        crit_stage = 3;
     }
-    int crit_pct = crit_stage > 0 ? (63 * (1 << crit_stage)) : 63;
+    int crit_pct = kCritPct[crit_stage];
     if ((int)(battle_rng() % 1000) < crit_pct) {
         crit_pct = -1; /* 强制暴击 */
     }

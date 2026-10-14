@@ -350,7 +350,7 @@ int main(void)
     /* nature 1 = hardy（勤奋），官方就是无修正 */
     check(kNatures[1].increased_stat == 0 && kNatures[1].decreased_stat == 0,
           "性格 nature1 (%s) 应无修正", kNatures[1].name);
-    /* nature 2 = lonely（孤僻/大胆）：+atk -def */
+    /* nature 2 = lonely（官方简中「怕寂寞」）：+atk -def */
     check(kNatures[2].increased_stat == 2, "性格 nature2 (%s) 应 +Atk，实际 +%d",
           kNatures[2].name, kNatures[2].increased_stat);
     check(kNatures[2].decreased_stat == 3, "性格 nature2 (%s) 应 -Def，实际 -%d",
@@ -358,13 +358,47 @@ int main(void)
     /* 最后一项 nature25 = quirky，不能是 NULL（NATURE_COUNT=26） */
     check(kNatures[25].name != NULL && kNatures[25].name_cn != NULL,
           "index 25 应有名字与中文名");
-    /* 中文名从 Veekun 繁体转简体，抽查几个固定的 */
-    check(strcmp(kNatures[1].name_cn, "勤奋") == 0,
-          "nature1 中文名应为「勤奋」，实际「%s」", kNatures[1].name_cn);
-    check(strcmp(kNatures[8].name_cn, "慢吞吞") == 0,
-          "nature8 中文名应为「慢吞吞」，实际「%s」", kNatures[8].name_cn);
-    check(strcmp(kNatures[25].name_cn, "认真") == 0,
-          "nature25 中文名应为「认真」，实际「%s」", kNatures[25].name_cn);
+
+    /*
+     * 中文名**逐条**对照官方简体名（手写，是本表的外部锚点）。
+     *
+     * 这段原来只抽查 3 条，而抽的那 3 条恰好也是照着错值写的：
+     * 生成器过去按 Veekun 的 nature_id 取中文名，可是 Veekun 的顺序是
+     * 1=hardy 2=bold 3=modest…，本项目的顺序是 1=hardy 2=lonely 3=brave…，
+     * 于是 25 个中文名错了 24 个，而抽查的 3 条刚好「都对」（断言与数据
+     * 来自同一处错值）。现在改成全量比对，顺序按本项目 id。
+     */
+    static const char *const kNatureCn[26] = {
+        "无",                                            /* 0 = 占位 */
+        "勤奋", "怕寂寞", "勇敢", "固执", "顽皮",
+        "大胆", "坦率", "悠闲", "淘气", "乐天",
+        "胆小", "急躁", "认真", "爽朗", "天真",
+        "内敛", "慢吞吞", "冷静", "害羞", "马虎",
+        "温和", "温顺", "自大", "慎重", "浮躁",
+    };
+    for (int i = 0; i < 26; i++) {
+        check(strcmp(kNatures[i].name_cn, kNatureCn[i]) == 0,
+              "性格 %d (%s) 中文名应为「%s」，实际「%s」",
+              i, kNatures[i].name, kNatureCn[i], kNatures[i].name_cn);
+    }
+
+    /*
+     * 「-特攻」不能写成「-特防」。固执/顽皮/淘气/乐天的降项曾经整批写反
+     * （spa/spd 序号互换），于是固执性格降的是**特防** —— 这会影响实战胜负，
+     * 不只是显示。stat 序号：4=spa 5=spd。
+     */
+    check(kNatures[4].increased_stat == 2 && kNatures[4].decreased_stat == 4,
+          "固执 应 +atk -spa，实际 +%d -%d",
+          kNatures[4].increased_stat, kNatures[4].decreased_stat);
+    check(kNatures[5].increased_stat == 2 && kNatures[5].decreased_stat == 5,
+          "顽皮 应 +atk -spd，实际 +%d -%d",
+          kNatures[5].increased_stat, kNatures[5].decreased_stat);
+    check(kNatures[9].increased_stat == 3 && kNatures[9].decreased_stat == 4,
+          "淘气 应 +def -spa，实际 +%d -%d",
+          kNatures[9].increased_stat, kNatures[9].decreased_stat);
+    check(kNatures[10].increased_stat == 3 && kNatures[10].decreased_stat == 5,
+          "乐天 应 +def -spd，实际 +%d -%d",
+          kNatures[10].increased_stat, kNatures[10].decreased_stat);
     printf("  1=%s/%s(+%d/-%d) 2=%s/%s(+%d/-%d)\n",
            kNatures[1].name, kNatures[1].name_cn,
            kNatures[1].increased_stat, kNatures[1].decreased_stat,

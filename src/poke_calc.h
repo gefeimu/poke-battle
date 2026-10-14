@@ -3,10 +3,15 @@
  *
  * 公式要点（Gen VI，X/Y ORAS）
  * ------------------------
- * 能力值
- *   HP  = ((Base_HP + IV/4) * 2) * Level / 100 + Level + 10 + EV/4
- *   其它 = ((Base + IV/4) * 2) * Level / 100 + 5 + EV/4
- *   之后乘性格修正（该项 +10% / -10%）
+ * 能力值（Gen III 起未变的官方式，VI 代也一样）
+ *   HP   = floor((2*Base_HP + IV + floor(EV/4)) * Level / 100) + Level + 10
+ *   其它 = floor((2*Base + IV   + floor(EV/4)) * Level / 100) + 5
+ *   之后乘性格修正（该项 +10% / -10%），HP 不吃性格
+ *
+ *   注意 IV 与 EV 都在 ×Level/100 **之内** —— 这正是过去写错的地方
+ *   （曾写成 ((Base + IV/4) * 2) * Level / 100 + 5 + EV/4：IV 贡献被砍半、
+ *   EV 又乘在等级缩放之外）。回归网见 gen/poke_stat_golden.h +
+ *   tools/stat_formula.py，那里的期望值取自游戏外可查的已知数值。
  *
  * 伤害（Gen VI 与 Gen III 有三处实质差异，务必注意）
  *   BaseDamage = floor(floor(floor(2*Level/5 + 2) * A * P / D) / 50) + 2
@@ -89,6 +94,12 @@ uint16_t calc_stat(const Statsheet *s, uint8_t stat_idx);
 /* 带能力等级的能力值。stage 传 NULL 视为 0。
  * stat_idx: 2=atk 3=def 4=spa 5=spd 6=spe（HP 不吃等级） */
 uint16_t calc_stat_staged(const Statsheet *s, uint8_t stat_idx, int8_t stage);
+
+/* 通用「等级 -> 倍率」，截断取整，净等级钳到 ±MAX_STAGE。
+ * base=2 用于能力值（+1 是 1.5 倍），base=3 用于命中/闪避（+1 是 4/3 倍）。
+ * 两种等级是同一个概念，必须走同一个函数 —— 曾经各写一套，能力值那套还是错的。
+ * 例：calc_stage_ratio(100, -1, 2) == 66，calc_stage_ratio(100, 6, 2) == 400。 */
+uint16_t calc_stage_ratio(uint16_t v, int8_t stage, uint8_t base);
 
 /* ---- 天气 / 条件 ---- */
 

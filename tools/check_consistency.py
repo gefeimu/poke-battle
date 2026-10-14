@@ -523,6 +523,106 @@ def main():
     for sc in ("UI_SCREEN_ACTION", "UI_SCREEN_CONFIRM"):
         check(sc in ses_c, f"ses_layer 认识 {sc}")
 
+    # ============================================================
+    # 17. 能力值公式 / 等级倍率 / 性格 = 外部已知值
+    #
+    # 本项目已经因为「手写数据 + 无上游校验 + 测试照着实现写期望值」
+    # 栽过四次（克制表 14 格、能力值公式、等级倍率表 11 档、性格 4+24 处），
+    # 而且每一次都是 `make test` 全绿。这一组把能力相关的数值模型钉死：
+    # 唯一权威是 tools/stat_formula.py，C 侧只能引用它生成的头文件。
+    # ============================================================
+    print("\n[17] 能力值公式 / 等级倍率 / 性格 = 外部已知值")
+    if str(ROOT / "tools") not in sys.path:
+        sys.path.insert(0, str(ROOT / "tools"))
+    import importlib
+    sf = importlib.import_module("stat_formula")
+    gsg = importlib.import_module("gen_stat_golden")
+
+    # 17.0 参考实现自己必须能重算出那些**游戏外可查**的已知值
+    sf_ok, sf_msgs = sf.self_check()
+    check(sf_ok, "stat_formula 参考实现能重算全部外部已知值"
+          + ("" if sf_ok else "（" + "；".join(sf_msgs[:3]) + "）"))
+
+    # 17.1 生成的头文件必须与生成器输出逐字节一致 —— 改了已知值却忘了
+    # 重跑 make stat-golden 时，测试还在拿旧期望值断言。
+    golden = read("gen/poke_stat_golden.h")
+    check(bool(golden) and golden == gsg.render(),
+          "gen/poke_stat_golden.h 与生成器输出一致（改过请重跑 make stat-golden）")
+
+    m = re.search(r"static const uint16_t kStageMul\[\d+\] = \{(.*?)\};",
+                  golden, re.S)
+    vals = [int(v) for v in re.findall(r"\d+", m.group(1))] if m else []
+    check(vals == list(sf.STAGE_MUL_AT_100), "golden 的能力值等级表 = 官方倍率")
+    check(len(vals) == 13 and vals[0] < vals[6] < vals[12],
+          "等级表覆盖 -6..+6 且单调递增（负档真的降、正档真的升）")
+
+    # 17.2 C 侧不能再有手写的等级查表，且公式必须是官方那一条
+    calc_c = read("src/poke_calc.c")
+    # 认「声明」而不是「出现过」——注释里提到旧表名是允许的（正是在解释它为什么被删）
+    check(not re.search(r"const\s+int8_t\s+NUM\s*\[\s*13\s*\]", calc_c)
+          and not re.search(r"const\s+int8_t\s+DEN\s*\[\s*13\s*\]", calc_c),
+          "poke_calc.c 里不再有手写的 NUM[13]/DEN[13] 等级表")
+    check(calc_c.count("2 * base + iv + ev / 4") == 2,
+          "calc_hp/calc_stat 各用了一处 (2*Base + IV + EV/4)（IV 不砍半、EV 在等级缩放之内）")
+    check("calc_stage_ratio" in calc_c
+          and "calc_stage_ratio" in read("src/poke_battle.c"),
+          "能力值与命中/闪避等级共用 calc_stage_ratio（不再各写一套）")
+
+    # 17.3 已知值里手抄的种族值必须与生成的种族表一致
+    #      （曾经把巨金怪 HP 写成 70，实际 80）
+    species_rows = {}
+    for line in read("gen/poke_species.c").splitlines():
+        s = line.strip()
+        if not s.startswith("{") or '"' not in s:
+            continue
+        body = s.rstrip(",").strip()
+        if body.endswith("}"):
+            body = body[:-1]
+        parts = [p.strip() for p in body[1:].split(",")]
+        if len(parts) < 14:
+            continue
+        try:
+            pid = int(parts[0])
+            hp6 = tuple(int(x) for x in parts[8:14])
+        except ValueError:
+            continue
+        species_rows[pid] = hp6
+    bad = []
+    for e in sf.KNOWN_STATS:
+        got = species_rows.get(e["species_id"])
+        if got != tuple(e["base"]):
+            bad.append(f"#{e['species_id']} 表里 {got} ≠ 已知值 {tuple(e['base'])}")
+    check(bool(species_rows) and not bad,
+          "已知值里的种族值与 gen/poke_species.c 一致"
+          + ("（" + "；".join(bad) + "）" if bad else ""))
+
+    # 17.4 性格表：id / 英文名 / (升,降) 必须与 stat_formula 一致
+    nature_rows = {}
+    for line in read("gen/poke_natures.c").splitlines():
+        mm = re.search(r'\{\s*(\d+),\s*(\d+),\s*"(\w+)",\s*"([^"]*)"\s*\},'
+                       r'\s*/\* nature (\d+) \*/', line)
+        if mm:
+            nature_rows[int(mm.group(5))] = (
+                mm.group(3), int(mm.group(1)), int(mm.group(2)), mm.group(4))
+    bad = []
+    for nid, name in sf.NATURE_ORDER.items():
+        got = nature_rows.get(nid)
+        inc, dec = sf.NATURE_EFFECT[name]
+        if not got or got[0] != name or got[1] != inc or got[2] != dec:
+            bad.append(f"nature {nid}({name})")
+    check(bool(nature_rows) and not bad,
+          "gen/poke_natures.c 的性格 id/英文名/(+,-) 与 stat_formula 一致"
+          + ("（" + "；".join(bad) + "）" if bad else ""))
+    no_cn = sorted(nid for nid, v in nature_rows.items() if not v[3])
+    check(not no_cn, f"每个性格都有中文名（缺 {no_cn or '无'}）")
+
+    # 17.5 测试必须真的引用 golden，而不是又抄一份期望值
+    check("poke_stat_golden.h" in read("test/test_calc.c"),
+          "test_calc.c 引用 golden 头文件（期望值来自外部已知值）")
+    rd2 = read("README.md")
+    for token in ("tools/stat_formula.py", "poke_stat_golden.h"):
+        check(token in rd2, f"README 提到了 {token}")
+
     print(f"\n=== 结果: {g_fail} 处不一致 ===")
     return 0 if g_fail == 0 else 1
 

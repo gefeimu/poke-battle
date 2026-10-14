@@ -25,6 +25,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 CSV = ROOT / "data" / "csv"
 
+# Veekun 的英文语言 id
+LANG_EN = 9
+
 # Veekun 的繁体中文语言 id
 LANG_ZH_HANT = 4
 LANG_ZH_HANS = 4  # 数据源只有繁体，转换后得到简体
@@ -126,6 +129,42 @@ def load_names(kind):
                     # 名字里的空格是官方的排版空格，UI 里会自己排版
                     out[int(r[id_col])] = to_simplified(raw).strip()
     _cache[kind] = out
+    return out
+
+
+def load_names_by_en(kind):
+    """
+    读某类实体的简体中文名，但**按英文名配对**：返回 {"bold": "大胆", ...}。
+
+    为什么需要这个
+    --------------
+    `load_names()` 是「同一个 id 取两行」，前提是**我们的 id 顺序和 Veekun
+    一致**。性格表不满足这个前提：我们的表用的是玩家熟悉的游戏内顺序
+    （1=hardy 2=lonely 3=brave ...），而 Veekun 的 nature_id 是另一套顺序
+    （1=hardy 2=**bold** 3=**modest** ...）。于是按 id 取中文名会整体错位 ——
+    实际表现是「固执」显示成别人家的名字，25 个里错了 24 个，而数据表
+    自检还照着错值写了断言，全绿。
+
+    改成「先按 id 配一次英文名，再拿这个英文名去配中文名」，就与双方的
+    id 顺序都无关了。英文名足够唯一（Veekun 里没有重名性格）。
+    """
+    cached = _cache.get(("by_en", kind))
+    if cached is not None:
+        return cached
+
+    fname, id_col = NAME_TABLES[kind]
+    path = CSV / fname
+    en, zh = {}, {}
+    if path.exists():
+        with open(path, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                lid = r.get("local_language_id")
+                if lid == str(LANG_EN):
+                    en[r[id_col]] = r["name"].strip().lower()
+                elif lid == str(LANG_ZH_HANT):
+                    zh[r[id_col]] = to_simplified(r["name"]).strip()
+    out = {en[k]: zh[k] for k in en if k in zh}
+    _cache[("by_en", kind)] = out
     return out
 
 

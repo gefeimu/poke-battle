@@ -18,6 +18,7 @@
 
 #include "poke_calc.h"
 #include "poke_learnsets.h"
+#include "poke_stat_golden.h"
 
 static int g_pass = 0;
 static int g_fail = 0;
@@ -66,54 +67,197 @@ uint32_t battle_rng(void)
     return s_rng;
 }
 
+/*
+ * 拿 gen/poke_stat_golden.h 里的一组**外部已知值**去验 calc_hp/calc_stat。
+ * 六项一起比，一次失败就把「实得/期望」六对数全打出来 —— 单项报错很难看出
+ * 是公式错了还是那一条数据本身的种族值抄错了。
+ */
+static void golden_case(const StatGolden *g)
+{
+    /*
+     * 编号必须在表里。数据表只到三代（1..386），写个不存在的编号时
+     * base_stat_of() 会一律返回 50 —— 算出来「有值」但全错，不崩不报错。
+     * 这里先挡一道（曾经把 #445 烈咬陆鲨写进已知值，而表里没有它）。
+     */
+    if (!species_get(g->species_id)) {
+        ok(0, g->note, "种族表里没有这个编号（数据只到三代 1..386）");
+        return;
+    }
+
+    Statsheet s;
+    statsheet_init(&s, g->species_id, g->level, g->nature);
+    for (int i = 0; i < 6; i++) {
+        s.ey.iv[i] = g->iv;
+        s.ey.ev[i] = (uint8_t)g->ev[i];
+    }
+
+    uint16_t got[6];
+    got[0] = calc_hp(&s);
+    for (int i = 1; i < 6; i++) {
+        got[i] = calc_stat(&s, (uint8_t)(i + 1));
+    }
+
+    int same = 1;
+    for (int i = 0; i < 6; i++) {
+        if (got[i] != g->want[i]) {
+            same = 0;
+        }
+    }
+    char buf[224];
+    snprintf(buf, sizeof buf,
+             "实得 %u/%u/%u/%u/%u/%u，期望 %u/%u/%u/%u/%u/%u"
+             "（hp/atk/def/spa/spd/spe）",
+             got[0], got[1], got[2], got[3], got[4], got[5],
+             g->want[0], g->want[1], g->want[2], g->want[3], g->want[4],
+             g->want[5]);
+    ok(same, g->note, buf);
+}
+
+/* 13 档等级倍率全量比对（base=2 能力值 / base=3 命中闪避） */
+static void stage_table(const char *title, uint8_t base, const uint16_t *want)
+{
+    printf("\n[能力等级] %s\n", title);
+    for (int i = 0; i < KSTAGEMUL_COUNT; i++) {
+        int stage = i - MAX_STAGE;
+        uint16_t got = calc_stage_ratio(100, (int8_t)stage, base);
+        char name[64];
+        char buf[96];
+        snprintf(name, sizeof name, "等级 %+d 时 100 -> %u", stage, got);
+        snprintf(buf, sizeof buf, "期望 %u（官方倍率表）", want[i]);
+        ok(got == want[i], name, buf);
+    }
+}
+
 int main(void)
 {
     printf("=== 三代伤害公式单测 ===\n\n");
 
     /* ================= 能力值 ================= */
-    printf("[能力值] Lv50 满IV 努力值0性格=认真\n");
+    /*
+     * 期望值来自 gen/poke_stat_golden.h（由 tools/stat_formula.py 维护）。
+     * 那里存的是**游戏外可查的已知值**：官方公式 + 官方种族值，
+     * 像「烈咬陆鲨 Lv100 252 速爽朗 = 333」「幸福蛋满血 714」是对战圈
+     * 长期引用的常识值，不是从 src/poke_calc.c 反推出来的。
+     *
+     * 这一段的历史值得记：期望值原来照着一份**错公式**写，注释里还写着
+     * `(49+7)*2*50/100+5=61`，于是错公式、错注释、错断言互相印证，
+     * `make test` 一直全绿 —— 而正确的攻击是 69，HP 是 120。
+     */
+    printf("[能力值] 妙蛙种子 Lv50 满IV 0努力 hardy(中性)\n");
     Statsheet bulba;
     statsheet_init(&bulba, 1, 50, 1);
-    /* HP  = (45+7)*2*50/100 + 50 + 10 + 0 = 52 + 60 = 112 */
-    ok_u16(calc_hp(&bulba), 112, "妙蛙种子 HP = 112");
-    /* 攻击 = (49+7)*2*50/100 + 5 = 56 + 5 = 61 */
-    ok_u16(calc_stat(&bulba, 2), 61, "妙蛙种子 攻击 = 61");
-    /* 防御 = 61 */
-    ok_u16(calc_stat(&bulba, 3), 61, "妙蛙种子 防御 = 61");
-    /* 特攻 = (65+7)*2*50/100 + 5 = 72 + 5 = 77 */
-    ok_u16(calc_stat(&bulba, 4), 77, "妙蛙种子 特攻 = 77");
-    /* 特防 = 77 */
-    ok_u16(calc_stat(&bulba, 5), 77, "妙蛙种子 特防 = 77");
-    /* 速度 = (45+7)*2*50/100 + 5 = 52 + 5 = 57 */
-    ok_u16(calc_stat(&bulba, 6), 57, "妙蛙种子 速度 = 57");
+    ok_u16(calc_hp(&bulba), 120, "妙蛙种子 HP = 120");
+    ok_u16(calc_stat(&bulba, 2), 69, "妙蛙种子 攻击 = 69");
+    ok_u16(calc_stat(&bulba, 3), 69, "妙蛙种子 防御 = 69");
+    ok_u16(calc_stat(&bulba, 4), 85, "妙蛙种子 特攻 = 85");
+    ok_u16(calc_stat(&bulba, 5), 85, "妙蛙种子 特防 = 85");
+    ok_u16(calc_stat(&bulba, 6), 65, "妙蛙种子 速度 = 65");
 
-    printf("\n[能力值] 性格修正 孤僻(+攻-防)\n");
+    printf("\n[能力值] 外部已知值回归（gen/poke_stat_golden.h，共 %d 组）\n",
+           STAT_GOLDEN_COUNT);
+    for (int i = 0; i < STAT_GOLDEN_COUNT; i++) {
+        golden_case(&kStatGolden[i]);
+    }
+
+    printf("\n[能力值] 性格修正 怕寂寞(nature 2 = +攻 -防)\n");
     Statsheet n = bulba;
-    n.nature = 2; /* 孤僻 */
-    ok_u16(calc_stat(&n, 2), 67, "孤僻 攻击 61 -> 67 (+10%)");
-    ok_u16(calc_stat(&n, 3), 54, "孤僻 防御 61 -> 54 (-10%)");
-    ok_u16(calc_stat(&n, 4), 77, "孤僻 特攻不变");
+    n.nature = 2;
+    ok_u16(calc_stat(&n, 2), 75, "怕寂寞 攻击 69 -> 75 (+10%)");
+    ok_u16(calc_stat(&n, 3), 62, "怕寂寞 防御 69 -> 62 (-10%)");
+    ok_u16(calc_stat(&n, 4), 85, "怕寂寞 特攻不变");
 
-    printf("\n[能力值] 努力值 252 点投入攻击 = +63\n");
+    /*
+     * 固执(+攻 -**特攻**)。这里专门盯住「-特攻 还是 -特防」：
+     * 性格表的 spa/spd 曾被写反 4 个（固执/顽皮/淘气/乐天），
+     * 于是一个固执性格降的是特防 —— 影响实战胜负，不只是显示。
+     */
+    printf("\n[能力值] 性格修正 固执(nature 4 = +攻 -特攻)\n");
+    Statsheet ad = bulba;
+    ad.nature = 4;
+    ok_u16(calc_stat(&ad, 2), 75, "固执 攻击 69 -> 75 (+10%)");
+    ok_u16(calc_stat(&ad, 4), 76, "固执 特攻 85 -> 76 (-10%)");
+    ok_u16(calc_stat(&ad, 5), 85, "固执 特防**不变**（不是被降的那项）");
+
+    printf("\n[能力值] 努力值 252 点投入攻击（乘在 ×Level/100 之内）\n");
     Statsheet e = bulba;
     statsheet_set_ev(&e, 2, 252);
-    ok_u16(calc_stat(&e, 2), 124, "252 努力攻击 = 124");
-    /* 0 个努力值时不受影响 */
-    ok_u16(calc_stat(&bulba, 2), 61, "0 努力 攻击仍为 61");
+    /* floor((2*49 + 31 + 63) * 50/100) + 5 = 96 + 5 = 101
+     * 曾经算成 124：把 ev/4 加在等级缩放之外，等于把努力值高估了一倍。 */
+    ok_u16(calc_stat(&e, 2), 101, "252 努力攻击 = 101");
+    ok_u16(calc_stat(&bulba, 2), 69, "0 努力 攻击仍为 69");
 
-    printf("\n[能力值] 努力值 255 上限\n");
+    printf("\n[能力值] 努力值 255 上限（255/4 = 63，与 252 同值）\n");
     statsheet_set_ev(&e, 2, 255);
-    ok_u16(calc_stat(&e, 2), 61 + 63, "255 努力 攻击 = 124（255/4=63）");
+    ok_u16(calc_stat(&e, 2), 101, "255 努力 攻击 = 101");
 
     printf("\n[能力值] 喷火龙 Lv50\n");
     Statsheet charz;
     statsheet_init(&charz, 6, 50, 1);
-    /* HP = (78+7)*2*50/100 + 60 = 85 + 60 = 145 */
-    ok_u16(calc_hp(&charz), 145, "喷火龙 HP = 145");
-    /* 特攻 = (109+7)*2*50/100 + 5 = 116 + 5 = 121 */
-    ok_u16(calc_stat(&charz, 4), 121, "喷火龙 特攻 = 121");
-    /* 特防 = (85+7)*2*50/100 + 5 = 92 + 5 = 97 */
-    ok_u16(calc_stat(&charz, 5), 97, "喷火龙 特防 = 97");
+    ok_u16(calc_hp(&charz), 153, "喷火龙 HP = 153");
+    ok_u16(calc_stat(&charz, 4), 129, "喷火龙 特攻 = 129");
+    ok_u16(calc_stat(&charz, 5), 105, "喷火龙 特防 = 105");
+
+    /* ================= 能力等级（13 档全量） ================= */
+    /*
+     * 这里过去**一条断言都没有**，而 apply_stage 是张手写查表、13 档错 11 档：
+     * 所有负档塌成 1.0x 或 0.67x（-1/-3/-5 降能力完全无效，威吓/叫声/瞪眼
+     * 成了摆设），正的 +2..+6 又严重放大（+6 算成 5 倍）。
+     * 现在改公式算，并且逐档对着官方倍率表断言。
+     */
+    stage_table("能力值倍率 base=2（-1 是 66、+6 是 400）", 2, kStageMul);
+    stage_table("命中/闪避倍率 base=3（-1 是 75、+1 是 133）", 3,
+                kAccStageMul);
+
+    printf("\n[能力等级] 负档必须真的降低能力（防「塌成 1.0x」复发）\n");
+    for (int st = -MAX_STAGE; st < 0; st++) {
+        uint16_t lo = calc_stat_staged(&bulba, 2, (int8_t)st);
+        char name[64];
+        char buf[80];
+        snprintf(name, sizeof name, "攻击在 %+d 档时降低", st);
+        snprintf(buf, sizeof buf, "%u < %u", lo, calc_stat(&bulba, 2));
+        ok(lo < calc_stat(&bulba, 2), name, buf);
+    }
+    ok(calc_stat_staged(&bulba, 1, 6) == calc_hp(&bulba),
+       "HP 不吃能力等级", "HP 项应原样返回");
+
+    /*
+     * 等级倍率错了会怎样（端到端）：威吓（降攻 -1）、剑舞（升攻 +2）、
+     * 挖洞（降防 -1）这些常见招式的效果必须真的体现在伤害上。
+     * 旧查表把所有负档塌成 1.0x，于是降能力完全无效 —— 这条断言盯的就是那个。
+     */
+    printf("\n[能力等级] 等级真的改变伤害（威吓/剑舞不是摆设）\n");
+    {
+        const MoveDef *mv = &kMoves[0];       /* 冲撞，物理 */
+        int8_t zero[6] = {0, 0, 0, 0, 0, 0};
+        int8_t atk_dn[6] = {0, -1, 0, 0, 0, 0};
+        int8_t atk_up[6] = {0, 2, 0, 0, 0, 0};
+        int8_t def_dn[6] = {0, 0, -1, 0, 0, 0};
+
+        rng_reset();
+        uint16_t d0 = calc_damage_ex(&bulba, CON_NONE, zero,
+                                     &charz, CON_NONE, zero,
+                                     mv, WX_NONE, 0, NULL);
+        rng_reset();
+        uint16_t d_dn = calc_damage_ex(&bulba, CON_NONE, atk_dn,
+                                       &charz, CON_NONE, zero,
+                                       mv, WX_NONE, 0, NULL);
+        rng_reset();
+        uint16_t d_up = calc_damage_ex(&bulba, CON_NONE, atk_up,
+                                       &charz, CON_NONE, zero,
+                                       mv, WX_NONE, 0, NULL);
+        rng_reset();
+        uint16_t d_defdn = calc_damage_ex(&bulba, CON_NONE, zero,
+                                          &charz, CON_NONE, def_dn,
+                                          mv, WX_NONE, 0, NULL);
+
+        char buf[128];
+        snprintf(buf, sizeof buf,
+                 "基准 %u / 攻-1 %u / 攻+2 %u / 守方防-1 %u",
+                 d0, d_dn, d_up, d_defdn);
+        ok(d_dn < d0 && d_up > d0,
+           "降攻等级减伤害、升攻等级加伤害", buf);
+        ok(d_defdn > d0, "降守方防等级加伤害", buf);
+    }
 
     /* ================= 属性克制 ================= */
     /* 妙蛙种子 = Grass/Poison，喷火龙 = Fire/Flying
@@ -224,31 +368,31 @@ int main(void)
     ok_u16(tackle->power, 40, "冲撞 威力 = 40");
     ok(tackle->damage_class == DMG_PHYSICAL, "冲撞 是物理招式", "");
 
-    printf("\n[伤害] 喷射火焰 妙蛙种子(草/毒,特攻77) -> 喷火龙(火/飞,特防97)\n");
+    printf("\n[伤害] 喷射火焰 妙蛙种子(草/毒,特攻85) -> 喷火龙(火/飞,特防105)\n");
     /* Gen VI 精确手算：
-     *   BaseDamage = floor(floor(22 * 77 * 90 / 50) / 97) + 2
-     *             = floor(3049 / 97) + 2 = 31 + 2 = 33
-     *   天气 无 -> 33
-     *   暴击 无 -> 33
-     *   随机 85..100/100 -> 28..33
+     *   BaseDamage = floor(floor(22 * 85 * 90 / 105) / 50) + 2
+     *             = floor(1602 / 50) + 2 = 32 + 2 = 34
+     *   天气 无 -> 34
+     *   暴击 无 -> 34
+     *   随机 85..100/100 -> 29..34
      *   STAB 火招 vs 草/毒 -> 不触发
-     *   克制 火 vs 火/飞 = 1x*0.5x = 0.5x -> 28*5/10 .. 33*5/10 = 14..16
-     * 期望区间 14~16 */
+     *   克制 火 vs 火/飞 = 1x*0.5x = 0.5x -> 29*5/10 .. 34*5/10 = 14..17
+     * 期望区间 14~17 */
     rng_reset();
     uint16_t d = calc_damage(&bulba, CON_NONE, &charz, CON_NONE, flame, WX_NONE, 0);
-    ok(d >= 14 && d <= 16, "喷射火焰 伤害 = 14~16（无STAB，克制 0.5x）", "见上方手算");
+    ok(d >= 14 && d <= 17, "喷射火焰 伤害 = 14~17（无STAB，克制 0.5x）", "见上方手算");
     printf("       实际 %u\n", d);
 
     printf("\n[伤害] STAB 验证：喷火龙(火)用喷射火焰打自己\n");
-    /* 喷火龙 Lv50 满IV 性格1(耐久)：SpA=121、SpD=97（不是 145/158）
-     *   BaseDamage = floor(floor(22*121*90/50)/97)+2 = floor(4787/97)+2 = 49+2 = 51
-     *   随机 85..100/100 -> 43..51
-     *   STAB 1.5 -> 64..76
-     *   克制 火 vs 火/飞 = 0.5x -> 32..38 */
+    /* 喷火龙 Lv50 满IV 性格1(中性)：SpA=129、SpD=105
+     *   BaseDamage = floor(floor(22*129*90/105)/50)+2 = floor(2432/50)+2 = 48+2 = 50
+     *   随机 85..100/100 -> 43..50
+     *   STAB 1.5 -> 64..75
+     *   克制 火 vs 火/飞 = 0.5x -> 32..37 */
     rng_reset();
     uint16_t d_stab = calc_damage(&charz, CON_NONE, &charz, CON_NONE, flame,
                                   WX_NONE, 0);
-    ok(d_stab >= 32 && d_stab <= 38, "同属性 STAB 生效（32~38）", "Base 51*1.5*0.5");
+    ok(d_stab >= 32 && d_stab <= 37, "同属性 STAB 生效（32~37）", "Base 50*1.5*0.5");
     printf("       实际 %u（对照：妙蛙种子用火招仅 14~16，差在 STAB 与 SpA）\n", d_stab);
     ok(d_stab > d, "STAB 使伤害明显提高", "同属性应高于跨属性");
 

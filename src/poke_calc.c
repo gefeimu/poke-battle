@@ -41,26 +41,51 @@ static uint16_t apply_nature(uint16_t v, uint8_t nature, uint8_t stat_idx)
     return v;
 }
 
-/* 能力等级修正（Gen III 起未变）：
- *   -6..-1 用乘数（2/3, 1/2, 2/5, 1/3, 2/7, 1/2），为 100/den
- *   +1..+6 用除数（3/2, 4/3, 3/2, 7/3, 4, 5）
- * 实作上统一用 (100*num)/(100*den) 处理，den 为 0 时无修正。 */
-static uint16_t apply_stage(uint16_t v, int8_t stage)
+/* 通用「等级 -> 倍率」，官方定义（base=2 为能力值，base=3 为命中/闪避）：
+ *   stage > 0 : (base + stage) / base
+ *   stage < 0 : base / (base + |stage|)
+ * 净等级先钳到 ±MAX_STAGE（官方规则：命中/闪避的**净值**也是 ±6 封顶）。
+ * 取整用截断 —— 官方对 100 点给出的就是 66/50/40/33/28/25，不是四舍五入。 */
+uint16_t calc_stage_ratio(uint16_t v, int8_t stage, uint8_t base)
 {
-    if (stage == 0) {
+    if (stage == 0 || base == 0) {
         return v;
     }
-    static const int8_t NUM[13] = {2, 2, 2, 2, 2, 2, 2, 3, 4, 3, 7, 4, 5};
-    static const int8_t DEN[13] = {3, 2, 3, 2, 3, 2, 3, 2, 3, 2, 3, 1, 1};
-
     int idx = stage;
     if (idx < -MAX_STAGE) idx = -MAX_STAGE;
     if (idx > MAX_STAGE) idx = MAX_STAGE;
-    uint16_t r = (uint16_t)mul_ratio(v, NUM[idx + 6], DEN[idx + 6]);
-    if (r == 0) {
-        r = 1;
+
+    uint32_t num;
+    uint32_t den;
+    if (idx > 0) {
+        num = (uint32_t)base + (uint32_t)idx;
+        den = base;
+    } else {
+        num = base;
+        den = (uint32_t)base + (uint32_t)(-idx);
     }
+    uint16_t r = (uint16_t)fdiv((uint32_t)v * num, den);
     return r;
+}
+
+/*
+ * 能力等级修正（Gen III 起未变，官方倍率）：
+ *
+ *   +1..+6 ：(2 + n) / 2   -> 1.5  2.0  2.5  3.0  3.5  4.0
+ *   -1..-6 ：2 / (2 + n)   -> 0.66 0.5  0.4  0.33 0.28 0.25
+ *
+ * 这里**曾经**是一张手写的 NUM[13]/DEN[13] 查表，13 档里错 11 档：
+ * 所有负档塌成 1.0x 或 0.67x（-1/-3/-5 降能力完全无效，威吓/叫声/瞪眼
+ * 成了摆设），正的 +2..+6 又严重放大（+6 算成 5 倍）。而 test_calc 对
+ * 能力等级一条断言都没有，所以「全绿却是错的」。
+ *
+ * 现在走 calc_stage_ratio(base=2)，命中/闪避等级走同一函数（base=3），
+ * 不再有第二套内联实现。
+ */
+static uint16_t apply_stage(uint16_t v, int8_t stage)
+{
+    uint16_t r = calc_stage_ratio(v, stage, 2);
+    return r ? r : 1;
 }
 
 /* 从种族值表取基础值 */
@@ -90,8 +115,17 @@ uint16_t calc_hp(const Statsheet *s)
     uint32_t ev = s->ey.ev[0];
     uint32_t lv = s->level;
 
-    /* HP 不受性格影响 */
-    uint32_t h = (base + iv / 4) * 2 * lv / 100 + lv + 10 + ev / 4;
+    /*
+     * Gen III+ 官方式，**HP 不受性格影响**：
+     *   HP = floor((2*Base + IV + floor(EV/4)) * Level / 100) + Level + 10
+     *
+     * 这里曾经写成 `(base + iv/4) * 2 * lv / 100 + lv + 10 + ev / 4`：
+     *   1) (base + iv/4)*2 = 2*base + floor(iv/2)，**IV 的贡献被砍半**
+     *   2) EV/4 加在 ×Level/100 **之外**，于是低等级时努力值被严重高估
+     * 妙蛙种子 Lv50/31IV/0EV 的 HP 因此从正确的 120 变成 112；
+     * 单项 252 努力值时差距更大。与能力值那处是同一个 bug。
+     */
+    uint32_t h = (2 * base + iv + ev / 4) * lv / 100 + lv + 10;
     if (h > 999) h = 999;
     if (h < 1) h = 1;
     return (uint16_t)h;
@@ -116,7 +150,15 @@ uint16_t calc_stat(const Statsheet *s, uint8_t stat_idx)
     uint32_t ev = s->ey.ev[stat_idx - 1];
     uint32_t lv = s->level;
 
-    uint32_t v = ((base + iv / 4) * 2 * lv) / 100 + 5 + ev / 4;
+    /*
+     * Gen III+ 官方式：
+     *   其它 = floor((2*Base + IV + floor(EV/4)) * Level / 100) + 5
+     * 之后才乘性格修正（这也是官方顺序：性格在最后一步）。
+     *
+     * 曾经写成 `((base + iv/4) * 2 * lv) / 100 + 5 + ev / 4`，
+     * 两处都错（IV 砍半、EV 乘在等级缩放之外）。详见 calc_hp。
+     */
+    uint32_t v = (2 * base + iv + ev / 4) * lv / 100 + 5;
 
     /* 性格 */
     v = apply_nature((uint16_t)v, s->nature, stat_idx);
