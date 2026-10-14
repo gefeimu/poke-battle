@@ -455,9 +455,9 @@ static void test_levels_differ(void)
          * 同一轮内两边用同一个种子，比较才是同题对比。
          */
         uint32_t seed_t = 0x12345678u + (uint32_t)t * 2654435761u;
-        s_rng = seed_t;
+        *battle_rng_state() = seed_t;
         ai_choose(&b, 0, &rookie_cfg, &r);
-        s_rng = seed_t;
+        *battle_rng_state() = seed_t;
         ai_choose(&b, 0, &expert_cfg, &e);
         if (r.is_switch != e.is_switch || r.slot != e.slot) {
             rookie_diff++;

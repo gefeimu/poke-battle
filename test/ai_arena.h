@@ -14,11 +14,13 @@
  * static inline 不会因为「定义了但没用到」触发 -Wunused-function，
  * 编译仍能保持零警告。
  *
- * 随机源约定（与既有 951 项断言、README 里的胜率数字绑定，别改）
- * ------------------------------------------------------------
+ * 随机源约定
+ * ----------
  *   每次 ai_choose / random_action 之前 rng_reset()，使**决策**可重放；
  *   引擎在 battle_step 里消耗的抽签，从重置后的位置继续。
- * 一旦改动这里，test_ai 的历史结论与 README 的胜率就再也对不上了。
+ *   随机源直接复用引擎的 s_rng（见 battle_rng_state），本文件不再自建一份
+ *   —— 自建那份会让 ai_choose 的 save/restore 在测试里失效，并给 AI vs AI
+ *   造出一个只由后手侧搜索长度决定的虚假 side0 劣势。
  *
  * 别改 arena_play 里的换人处理
  * --------------------------
@@ -42,28 +44,35 @@
 /* 该侧由随机手控制（不是 AI 档位） */
 #define ARENA_RANDOM 0xFFu
 
-/* ---- 固定随机源 ---- */
-static uint32_t s_rng = 0x12345678u;
-
+/* ---- 统一随机源：直接复用引擎的 s_rng（battle_rng_state）----
+ *
+ * 这里**不再自建 static s_rng**。自建的那份与 battle_rng_state() 指向的
+ * 是引擎里另一个变量，于是：① ai_choose 的随机流 save/restore 在测试里
+ * 形同虚设；② AI vs AI 时进入 battle_step 的随机流只由后动作一侧的搜索
+ * 长度决定，凭空造出一个引擎里并不存在的 side0 劣势。合成一份后，测试与
+ * 真机的随机行为一致。
+ */
 uint32_t battle_rng(void)
 {
-    s_rng ^= s_rng << 13;
-    s_rng ^= s_rng >> 17;
-    s_rng ^= s_rng << 5;
-    return s_rng;
+    uint32_t *st = battle_rng_state();
+    *st ^= *st << 13;
+    *st ^= *st >> 17;
+    *st ^= *st << 5;
+    return *st;
 }
 
 /* 伤害随机因子同源覆盖，保证 AI 的伤害预估可重放
  * （-DPOKE_CALC_TEST_NO_RAND 关掉了 poke_calc.c 内的实现）。*/
 uint8_t calc_rand_85_100(void)
 {
-    s_rng ^= s_rng << 13;
-    s_rng ^= s_rng >> 17;
-    s_rng ^= s_rng << 5;
-    return (uint8_t)(85 + (s_rng % 16));
+    uint32_t *st = battle_rng_state();
+    *st ^= *st << 13;
+    *st ^= *st >> 17;
+    *st ^= *st << 5;
+    return (uint8_t)(85 + (*st % 16));
 }
 
-static inline void rng_reset(void) { s_rng = 0x12345678u; }
+static inline void rng_reset(void) { *battle_rng_state() = 0x12345678u; }
 
 static inline uint16_t find_move(const char *name)
 {
