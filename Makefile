@@ -234,9 +234,9 @@ lvgl-font-to-c:
 readme-images:
 	python tools/make_readme_images.py
 
-# 把固件渲染层画的**八屏**界面导成图片。
+# 把固件渲染层画的**九屏**界面导成图片。
 # 渲染的 bug 不崩溃、不报错，只是画出来不对 —— 只能看图发现。
-# 八屏各自的版式不同源（战斗界面照原版，菜单是自己定的），所以一屏一张图，
+# 九屏各自的版式不同源（战斗界面照原版，菜单是自己定的），所以一屏一张图，
 # 混在一起看容易漏掉某一屏没画。
 $(BUILD)/dump_screen: test/dump_screen.c $(SCREEN_SRC) | $(BUILD)
 	$(CC) $(CFLAGS) $(INC) $(TESTFLAGS) -o $@ $< $(SCREEN_SRC)

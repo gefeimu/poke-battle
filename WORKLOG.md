@@ -183,7 +183,7 @@ docs/    数据源说明、第三方素材
 | `poke_item.c/h` | 道具系统 |
 | `poke_ai.c/h` | 三层 AI（L1 启发式 / L2 2-ply / L3 蒙特卡洛） |
 | `poke_render.c/h` | 渲染层：绘制原语 + 精灵图 + 位图字体 |
-| `poke_ui.c/h` | 界面绘制：战斗界面 + 菜单界面（八屏） |
+| `poke_ui.c/h` | 界面绘制：战斗界面 + 菜单界面（七屏） |
 | `poke_ui_state.c/h` | 界面状态机：界面栈 / 光标 / 滚动 / 连发 / 动作上报 |
 | `poke_input.c/h` | 三键驱动：键位锁 + 去抖 + 短按/长按 |
 | `poke_session.c/h` | 会话层：按键 → 状态机 → 引擎 → 一屏数据（把上面全串起来） |
@@ -354,7 +354,7 @@ make lvgl-font FONT=data/fonts/SmileSans-Oblique.ttf   # 重新生成中文字�
  M tools/check_consistency.py（解析 #define / enum 符号常量）
  M gen/font_chars.txt + gen/font_app_12.c + gen/font_app_16.c
                          + gen/poke_font_data.c/h（补「肉」「耗」并重生成 LVGL 字体）
- M Makefile              （SCRIPTS_SCREENS 加 preset；注释「七屏」→「八屏」）
+ M Makefile              （SCRIPTS_SCREENS 加 preset；注释里的屏数同步更新）
  M README.md / WORKLOG.md（断言计数 951 → 983 同步）
 ```
 
@@ -375,7 +375,7 @@ make lvgl-font FONT=data/fonts/SmileSans-Oblique.ttf   # 重新生成中文字�
    —— 改成把 0 号位换成喷火龙再测。
 
 **验证**：`make test` → 983 项全过 / 17 组 0 处不一致 / 零警告；
-`make play-check` → 15/15；`dump_screen` 八屏覆盖校验 problems=0。
+`make play-check` → 15/15；`dump_screen` 九屏覆盖校验 problems=0。
 
 ---
 
