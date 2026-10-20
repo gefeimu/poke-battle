@@ -532,6 +532,46 @@ side0 只赢 26.7%（N=150），远离应有的 50%（§2.3 第 3 条记的「�
 - 官方已有可复用的东西：LVGL、`components/bsp`、微信小程序（但小程序不能用于配队）。
 - Flash / NVS 细节与烧录注意事项见 `README.md`。
 
+### 12.1 官方 BSP 的接口面（2026-10-20 查证，接路线图 #8 用）
+
+来自 `components/bsp/include/` 的三个头文件（已逐个取回原文核对，不是估的）：
+
+**引脚与硬件参数**（`bsp_pins.h`，官方自称「单一事实来源」）：
+- 屏：**ST7789P3 240×320**，4-line SPI；`MOSI 9 / SCLK 8 / CS 1 / DC 20 / RST -1`（
+  RST 未接 MCU，靠 SWRESET 软复位）`/ BL 21`（LEDC PWM 调光）、`PCLK 80 MHz`、SPI mode 0、
+  **`BSP_LCD_INVERT_COLOR 1`**（出厂即需反色，官方初始化里无条件发 INVON）。
+- 按键：三键共用 **ADC1_CH0 / GPIO0**，`BSP_BTN_MV_TABLE = {{0,150},{150,447},{447,1900}}`，
+  松开态 ≈3300 mV，**退出口是 180 ms 短按窗口 / 500 ms 长按**；并注明「不能改用内部上拉」。
+- 音频：`I2S_NUM_0`，`MCLK 6 / BCLK 5 / WS 3 / DOUT 2 / DIN 4 / PA_CTRL -1`；
+  I2C `SDA 10 / SCL 7`，`ES8311 0x18`、`CW2017 0x63`。
+
+**显示 API**（`bsp_display.h`）：`bsp_display_init()`、**`bsp_display_panel()`（返回
+`esp_lcd_panel_handle_t`，官方明确说「想直接 `esp_lcd_panel_draw_bitmap` 画、或接 LVGL
+以外的 GUI 时用」）**、`bsp_display_io()`、`bsp_display_backlight(percent)`、
+deep-sleep 两个辅助函数；LVGL 那层是**可选的**（`bsp_lvgl_init/lock/unlock`）。
+常量 `BSP_LVGL_SCREEN_RADIUS 30`：LVGL 那层会把四角遮黑 —— 走我们自己的 `draw_bitmap`
+路径时四角是方的，**接真机时要自己决定要不要给边角留白**（面板物理上可能被外壳圆角盖住）。
+
+**按键 API**（`bsp_button.h`）：`bsp_button_init(cb, user)`（回调跑在共享 `esp_timer`
+任务里，官方注明「只能入队或做有界操作」）、**`bsp_button_read_mv()`（返回当前 ADC 原始
+电压 mV，失败 -1）**、deep-sleep 的 `bsp_button_prepare_deep_sleep()`。
+事件枚举 `BSP_BTN_{PRESS,CLICK,DOUBLE,LONG,RELEASE}` 与 `bsp_btn_t{UP,DOWN,OK}`。
+
+**和本项目两层正好对上**（这是 #8 能做的直接依据）：
+- 输入层 `poke_input` 只要「**一个 mV 读数 + 一个毫秒时基**」→ 每 1 ms 调
+  `bsp_button_read_mv()` 喂 `key_poll()` 即可，**不必使用 `bsp_button_init()` 的回调**；
+  电压窗口与 500 ms 长按本来就抄自 `BSP_BTN_MV_TABLE`（见 §14 那张对照表）。
+- 渲染层只要「**一块能写的 RGB565 内存**」→ 用 `esp_lcd_panel_draw_bitmap(bsp_display_panel(),
+  x, y, w, h, buf)` 按条带刷；官方只给 9.6 KB 条纹缓冲，所以要按条带分块画（`poke_render`
+  已经是这个模型）。传输完成要自己拿信号量等（走 LVGL 那层时是 BSP 注册的回调，
+  我们自己画就得自己注册 `on_color_trans_done` / 或在两次 draw 之间等）。
+- 音频本次不做（游戏暂无声音需求），要加时用 `bsp_audio.h`。
+
+**#8 还缺的前置条件**（本机 `2026-10-20` 核查）：**没有 ESP-IDF 工具链**
+（`IDF_PATH` 空、PATH 无 `idf.py`、无 Espressif 目录）、**本地没有官方仓副本**、
+仓库里也**还没有固件骨架**（无 `CMakeLists.txt` / `main/` / `sdkconfig`）。
+所以「写出来能 `idf.py build` 编过、但真机行为要等板子到手才能验」是这一项的天然边界。
+
 ---
 
 *本文档由开发过程中的工作记忆汇总而成。新产生的决策、踩坑、进度请继续追加，保持「下次接手 5 分钟能进入状态」。*
