@@ -527,7 +527,7 @@ static int play_game(int ai_side, uint8_t level, int opponent_level,
     case  0: lv0 = level;        lv1 = ARENA_RANDOM; break;
     default: lv0 = ARENA_RANDOM; lv1 = level; break; /* ai_side == 1 */
     }
-    return arena_play(&t0, &t1, lv0, lv1, turns_out, bad_out);
+    return arena_play(&t0, &t1, lv0, lv1, seed, turns_out, bad_out);
 }
 
 /* 12. AI 双边对打：全部合法、能终局 */

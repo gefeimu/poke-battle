@@ -16,8 +16,16 @@
  *
  * 随机源约定
  * ----------
- *   每次 ai_choose / random_action 之前 rng_reset()，使**决策**可重放；
- *   引擎在 battle_step 里消耗的抽签，从重置后的位置继续。
+ *   **决策可重放**：每次 ai_choose 之前 rng_reset()，ai_choose 内部又自己
+ *   save/restore，所以搜索不消耗对局的随机流（与真机一致）。
+ *   **对局的随机性每回合换一个起点**：每回合开打前把随机源设成
+ *   (game_seed, 回合号) 的确定性函数，见 arena_round_seed()。
+ *   这一条是必须的：只把随机源重置成**同一个**种子，会让每回合抽到同一批数
+ *   （暴击、伤害档、同速平局每回合一模一样）—— 纯镜像对局（双方队伍完全相同）
+ *   于是被这套固定剧本决定胜负。实测（真镜像，N=60，理想 50%）：
+ *   每决策重置 0x12345678 → side0 只赢 25%，换成 0xDEADBEEF → 43%；
+ *   改成每回合换起点后，两个种子都落在 45~47%。整局仍完全可重放：
+ *   同一个 game_seed → 同一场。
  *   随机源直接复用引擎的 s_rng（见 battle_rng_state），本文件不再自建一份
  *   —— 自建那份会让 ai_choose 的 save/restore 在测试里失效，并给 AI vs AI
  *   造出一个只由后手侧搜索长度决定的虚假 side0 劣势。
@@ -74,6 +82,21 @@ uint8_t calc_rand_85_100(void)
 
 static inline void rng_reset(void) { *battle_rng_state() = 0x12345678u; }
 
+/*
+ * 一局里**每回合**给引擎换一个随机起点。
+ *
+ * 只重置成同一个种子会让每回合抽到同一批数（暴击/伤害档/同速平局每回合
+ * 一模一样）；纯镜像对局里这套固定剧本就成了胜负的唯一来源。这里由
+ * (game_seed, 回合号) 确定性导出，所以「局内随机多样、整局完全可重放」两者兼得。
+ *
+ * **返回值不许是 0**：0 是 xorshift 的不动点，一旦落进去就永远抽 0。
+ */
+static inline uint32_t arena_round_seed(uint32_t game_seed, uint32_t turn)
+{
+    uint32_t v = game_seed * 2654435761u + turn * 0x9E3779B9u;
+    return v ? v : 1u;
+}
+
 static inline uint16_t find_move(const char *name)
 {
     for (uint16_t i = 1; i < MOVE_COUNT; i++) {
@@ -125,14 +148,24 @@ static inline void start_battle(Battle *b, const MonSpec *mine, int nm,
     battle_start(b);
 }
 
-/* 询问 AI（每次重置随机源保证可重放） */
+/* 询问 AI（决策可重放：先把随机源拨回固定起点，事后再还原调用方留下的流） */
 static inline AIAction ask(Battle *b, int side, uint8_t level)
 {
     AIConfig cfg;
     ai_config_default(&cfg, level);
     AIAction a;
+    /*
+     * 先记住调用方留给这一回合的随机起点，再拨回固定种子让搜索可重放；
+     * ai_choose 返回后把起点还原回去。
+     *
+     * **必须还原**：不还原的话，这一回合的起点就被这次决策吃掉了 ——
+     * 后面 random_action（随机手）和 battle_step 都只能从 0x12345678 开始抽，
+     * 于是随机手永远选同一招、引擎每回合抽到同一批数（本文件开头记的那个坑）。
+     */
+    uint32_t keep = *battle_rng_state();
     rng_reset();
     ai_choose(b, side, &cfg, &a);
+    *battle_rng_state() = keep;
     return a;
 }
 
@@ -302,11 +335,13 @@ static inline int has_any_legal(const Battle *b, int side)
 
 /*
  * 打一整局。lv0 / lv1 是该侧档位，取 ARENA_RANDOM 表示该侧用随机手。
+ * game_seed 决定这一局的「引擎随机脚本」（见 arena_round_seed）：
+ * 同一个 game_seed + 同一对队伍 → 完全同一场。
  * 返回 0 = side0 胜，1 = side1 胜，-1 = 平局/未终局。
  * bad_out 累加非法动作次数；turns_out 回写回合数（均可传 NULL）。
  */
 static inline int arena_play(const ArenaTeam *t0, const ArenaTeam *t1,
-                             uint8_t lv0, uint8_t lv1,
+                             uint8_t lv0, uint8_t lv1, uint32_t game_seed,
                              int *turns_out, int *bad_out)
 {
     uint8_t lv[2] = { lv0, lv1 };
@@ -327,6 +362,9 @@ static inline int arena_play(const ArenaTeam *t0, const ArenaTeam *t1,
     int bad = 0; /* 本局非法动作累计，循环结束再回写，使 bad_out 可传 NULL */
     while (b.result == BATTLE_ONGOING && b.turn < 300 && guard < 600) {
         guard++;
+        /* 每回合换一个随机起点：局内随机多样（暴击/伤害档/同速平局每回合
+         * 都不同），整局仍完全可重放。理由见文件头「随机源约定」。 */
+        *battle_rng_state() = arena_round_seed(game_seed, b.turn);
         for (int side = 0; side < 2; side++) {
             const BattleMon *act = battle_active_c(&b, side);
             AIAction a;
@@ -336,8 +374,7 @@ static inline int arena_play(const ArenaTeam *t0, const ArenaTeam *t1,
                 if (ai) {
                     a = ask(&b, side, lv[side]);
                 } else {
-                    rng_reset();
-                    random_action(&b, side, &a);
+                    random_action(&b, side, &a);   /* 从本回合起点抽签 */
                 }
                 if (!action_valid(&b, side, &a)) {
                     if (has_any_legal(&b, side)) bad++;
@@ -350,8 +387,7 @@ static inline int arena_play(const ArenaTeam *t0, const ArenaTeam *t1,
             if (ai) {
                 a = ask(&b, side, lv[side]);
             } else {
-                rng_reset();
-                random_action(&b, side, &a);
+                random_action(&b, side, &a);       /* 从本回合起点抽签 */
             }
             if (!action_valid(&b, side, &a)) {
                 if (has_any_legal(&b, side)) bad++;

@@ -17,12 +17,16 @@
  *
  * 可重放
  * ------
- *   决策随机源沿用 ai_arena.h 的约定（每次决策前 rng_reset），所以
- *   **一局的结果完全由双方队伍决定**。这就要求每局的两支队伍必须不同，
- *   否则 N 局会跑出 N 个逐字节相同的结果：
+ *   随机源约定见 ai_arena.h：决策用固定种子（可重放），**对局的随机性每回合
+ *   换一个起点**（arena_round_seed(game_seed, 回合号)），game_seed 就是每局
+ *   抽队伍用的那个种子。所以**一局的结果完全由双方队伍决定**，而局内的
+ *   暴击/伤害档/同速平局是逐回合变化的。
+ *   这就要求每局的两支队伍必须不同，否则 N 局会跑出 N 个逐字节相同的结果：
  *     - 档位阶梯 / 档位矩阵 / 大样本：每局用 random_team(种子) 现抽两支队伍；
  *     - 队伍风格：每个原型先取「按种族值指标排序的前 24 只」当池子，
  *       每局从池里不重复抽 6 只 —— 既保持原型特征，又有真正的样本差异。
+ *   （**曾经**是「每次决策前把随机源重置成同一个种子」，于是每回合抽到同一批数，
+ *   纯镜像格被固定剧本决定胜负；见 ai_arena.h 文件头的记录。）
  *
  * 队伍风格用**种族值**定义，数字全部来自 gen/poke_species.c，不手填：
  *     SPEED = 速度            OFFENSE = 攻击+特攻
@@ -220,7 +224,8 @@ static void suite_ladder(int N)
         ArenaTeam a, b;
         draw_random_pair((uint32_t)(0x3000 + g * 7919), &a, &b);
         int turns = 0, bad = 0;
-        int w = arena_play(&a, &b, ARENA_RANDOM, ARENA_RANDOM, &turns, &bad);
+        int w = arena_play(&a, &b, ARENA_RANDOM, ARENA_RANDOM,
+                           (uint32_t)(0x3000 + g * 7919), &turns, &bad);
         stat_add(&base->st, w, turns, bad);
     }
     printf("  %-9s %5.1f%%  (%d/%d)  平 %d  平均 %.1f 回合  非法 %d\n",
@@ -234,7 +239,8 @@ static void suite_ladder(int N)
             ArenaTeam a, b;
             draw_random_pair((uint32_t)(0x3000 + g * 7919), &a, &b);
             int turns = 0, bad = 0;
-            int w = arena_play(&a, &b, kLevel[lv], ARENA_RANDOM, &turns, &bad);
+            int w = arena_play(&a, &b, kLevel[lv], ARENA_RANDOM,
+                               (uint32_t)(0x3000 + g * 7919), &turns, &bad);
             stat_add(&r->st, w, turns, bad);
         }
         printf("  %-9s %5.1f%%  (%d/%d)  平 %d  平均 %.1f 回合  非法 %d\n",
@@ -257,7 +263,9 @@ static void suite_matrix(int N)
                 ArenaTeam a, b;
                 draw_random_pair((uint32_t)(0x4000 + g * 104729), &a, &b);
                 int turns = 0, bad = 0;
-                int w = arena_play(&a, &b, kLevel[i], kLevel[j], &turns, &bad);
+                int w = arena_play(&a, &b, kLevel[i], kLevel[j],
+                                   (uint32_t)(0x4000 + g * 104729),
+                                   &turns, &bad);
                 stat_add(&r->st, w, turns, bad);
             }
             printf(" %7.1f%%", pct(r->st.wins0, r->st.games));
@@ -283,7 +291,7 @@ static void suite_archetype(int N)
                 make_arch(i, s0, &a);
                 make_arch(j, s1, &b);
                 int turns = 0, bad = 0;
-                int w = arena_play(&a, &b, AI_EXPERT, AI_EXPERT, &turns, &bad);
+                int w = arena_play(&a, &b, AI_EXPERT, AI_EXPERT, s0, &turns, &bad);
                 stat_add(&r->st, w, turns, bad);
             }
             printf(" %7.1f%%", pct(r->st.wins0, r->st.games));
@@ -303,7 +311,8 @@ static void suite_stable(int N)
         ArenaTeam a, b;
         draw_random_pair((uint32_t)(0x6000 + g * 2654435761u), &a, &b);
         int turns = 0, bad = 0;
-        int w = arena_play(&a, &b, AI_EXPERT, ARENA_RANDOM, &turns, &bad);
+        int w = arena_play(&a, &b, AI_EXPERT, ARENA_RANDOM,
+                           (uint32_t)(0x6000 + g * 2654435761u), &turns, &bad);
         stat_add(&r->st, w, turns, bad);
         if ((g + 1) % 250 == 0) {
             printf("    ... %d/%d 局，当前胜率 %.1f%%\n", g + 1, N,
