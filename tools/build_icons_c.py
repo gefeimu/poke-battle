@@ -137,6 +137,7 @@ def build_c(records, gen):
 #define POKE_ICONS_H
 
 #include <stdint.h>
+#include <stddef.h>
 #include "poke_sprites.h"     /* 复用 SpriteEntry */
 
 #define ICON_SIZE  {ICON_SIZE}

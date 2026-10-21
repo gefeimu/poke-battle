@@ -3,6 +3,7 @@
 #define POKE_MOVES_H
 
 #include <stdint.h>
+#include <stddef.h>
 #include "poke_types.h"
 
 /* ---------- 招式大类（Veekun move_meta.meta_category_id） ---------- */

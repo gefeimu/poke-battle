@@ -3,6 +3,7 @@
 #define POKE_ABILITIES_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 /*
  * 特性枚举。命名规则 ABIL_<英文名大写>，顺序与 kAbilities 一致。

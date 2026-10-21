@@ -14,6 +14,7 @@ MIT（在 `LICENSE` 里追加任何额外文字都会让它判成 "Other"）。
 | `gen/poke_sprites.c` | 427 张精灵图的索引色像素与调色板 | 游戏素材，版权归任天堂 / Creatures / GAME FREAK；来源见 [docs/data-sources.md](docs/data-sources.md) |
 | `gen/font_app_16.c` | 得意黑（Smiley Sans）裁出的字形位图 | SIL OFL 1.1，全文见 [docs/third-party/SmileySans-OFL.txt](docs/third-party/SmileySans-OFL.txt) |
 | `gen/font_cn.c` | 等线（Windows 系统字体）裁出的点阵 | 随 Windows 分发，**仅供本机自用**；若要公开发布请换成 OFL 字体重新生成 |
+| `components/bsp/` | 官方 FoloToy ai-passport 的 BSP（显示驱动与引脚表）；按键只留 ADC 采样，未引入 LVGL / 音频 / 电量计 | MIT，全文见 [components/bsp/LICENSE](components/bsp/LICENSE)。来源 `github.com/FoloToy/ai-passport` commit `a06235e4`（2026-10-09），裁剪说明见 [WORKLOG §12.2](WORKLOG.md) |
 
 **下载到本地才会用到的数据**（不在仓库里，见 [docs/data-sources.md](docs/data-sources.md)）：
 

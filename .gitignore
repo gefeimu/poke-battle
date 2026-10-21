@@ -1,10 +1,18 @@
 # ---- 构建产物 ----
 build/
+build-fw/
 *.o
 *.exe
 *.elf
 *.bin
 *.map
+
+# ---- ESP-IDF ----
+# sdkconfig 由 sdkconfig.defaults 生成，不入库（与官方仓一致）
+sdkconfig
+sdkconfig.old
+dependencies.lock
+managed_components/
 
 # ---- 第三方数据源（体积大，按 docs/data-sources.md 自行下载）----
 # Veekun 的 CSV 数据集，约 12 MB，gen_gen3_data.py 的输入

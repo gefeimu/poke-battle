@@ -1,0 +1,28 @@
+# -*- mode: cmake -*-
+# 目标芯片
+CONFIG_IDF_TARGET="esp32c3"
+# ESP32-C3 无 PSRAM，故不设 CONFIG_SPIRAM。
+
+# --- Flash ---
+# 与官方 BSP 的板子一致：8MB Flash。精灵图数据约 5.4MB，必须用 8MB 才能装下。
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+# 固定 8MB 镜像头，关闭 detect，便于 idf.py merge-bin。
+CONFIG_ESPTOOLPY_HEADER_FLASHSIZE_UPDATE=n
+
+# --- 分区表 ---
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# --- 控制台 ---
+# 用 C3 原生 USB-Serial-JTAG（GPIO18/19）。不要用 UART0：默认 TX=GPIO21，
+# 与本板背光引脚冲突。
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# --- 系统 ---
+# 输入层要求 1ms 时基（每 1ms 喂一次 ADC 采样），所以 tick 必须是 1000Hz。
+CONFIG_FREERTOS_HZ=1000
+# draw_frame 要在栈上放 Surface / BattleScreen / MenuScreen 等结构，
+# 默认 3584 字节偏紧。
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192

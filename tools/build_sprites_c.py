@@ -355,6 +355,7 @@ def build_c(records, mega_map, gen3_dir="firered-leafgreen"):
 #define POKE_SPRITES_H
 
 #include <stdint.h>
+#include <stddef.h>
 #include <stdbool.h>
 
 /* 调色板槽位：索引 0 = 透明 */

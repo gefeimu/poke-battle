@@ -1,0 +1,6 @@
+# Name,   Type, SubType, Offset,   Size,     Flags
+# 与官方 BSP 仓库一致（AI Passport / 8MB Flash）。
+# 精灵图 + 字库约 6.5MB，factory 占 0x10000..0x800000。
+nvs,      data, nvs,     0x9000,   0x6000,
+phy_init, data, phy,     0xf000,   0x1000,
+factory,  app,  factory, 0x10000,  0x7f0000,

@@ -3,6 +3,7 @@
 #define POKE_LEARNSETS_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 #define LEARNSET_MAX_NODES 24
 typedef struct { uint8_t level; uint16_t move_id; } LearnEntry;

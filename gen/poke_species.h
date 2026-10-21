@@ -3,6 +3,7 @@
 #define POKE_SPECIES_H
 
 #include <stdint.h>
+#include <stddef.h>
 #include "poke_types.h"
 
 typedef struct {

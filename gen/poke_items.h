@@ -3,6 +3,7 @@
 #define POKE_ITEMS_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 typedef enum {
     ITEMKIND_NONE = 0,

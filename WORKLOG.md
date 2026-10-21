@@ -572,6 +572,72 @@ deep-sleep 两个辅助函数；LVGL 那层是**可选的**（`bsp_lvgl_init/loc
 仓库里也**还没有固件骨架**（无 `CMakeLists.txt` / `main/` / `sdkconfig`）。
 所以「写出来能 `idf.py build` 编过、但真机行为要等板子到手才能验」是这一项的天然边界。
 
+### 12.2 固件骨架已编过（2026-10-21，路线图 #8）
+
+**结果**：`idf.py build` 通过，`poke_battle.bin` **1,718,336 B（1.64 MiB）**，8 MB 的
+factory 分区还剩 **79%**；本项目组件零警告。**真机行为完全未验**（颜色/反色、
+按键电压、刷屏撕裂都要板子到手才看得到）。
+
+**构建入口**
+- 根 `CMakeLists.txt`：`EXTRA_COMPONENT_DIRS = src gen`，两者各是一个组件；
+  `main/` 是第三个。PC 的 Makefile 与 IDF 共用同一份源码，没有第二份实现。
+- `sdkconfig.defaults`：ESP32-C3、8 MB Flash、console 走 USB-Serial-JTAG
+  （**不用 UART0**：默认 TX=GPIO21 与背光冲突）、`FREERTOS_HZ=1000`（1 ms 采样）、
+  `MAIN_TASK_STACK_SIZE=8192`。
+- `partitions.csv` 与官方一致（nvs 24 KB / phy / factory 0x7f0000）。
+- 产物目录用 `build-fw/`，与 PC 的 `build/` 分开（`make clean` 不会带走固件缓存）。
+
+**`main/app_main.c` 做了什么**
+- `bsp_display_init()` → 背光 100% → `bsp_button_init()`。
+- 绘制按 **240×64 条带**（30 KB ×1）逐条画、逐条
+  `esp_lcd_panel_draw_bitmap()`；传输是异步的，所以注册了
+  `on_color_trans_done` 回调 + 信号量，发一条等一条再复用缓冲。
+- 字节序：绘制层存小端 RGB565，ST7789 走 SPI 要高位在前 → 每条发送前 swap
+  （官方 LVGL 层是 `swap_bytes=true`，同一件事）。
+- 输入：每 1 ms 调一次 `bsp_button_read_mv()` 喂 `ses_poll()`；每 16 ms
+  `ses_tick()` 做按住连发 —— 与 PC 试玩链路同一节奏。
+- 刷新：用「阶段 / 界面 / 光标 / 日志序号 / 等待动效相位 / 回合数」做指纹，
+  变了才重画，静止画面不占 SPI。
+
+**`components/bsp` 的裁剪**（上游 commit `a06235e4`，MIT）
+- 保留：`bsp_pins.h`（引脚与电压窗口的单一事实来源）、`bsp_display.h/.c`
+  （ST7789P3 厂商序列 + LEDC 背光）。
+- 按键 `bsp_button.h/.c`：只留 ADC oneshot + 曲线拟合校准与 `read_mv()`；
+  去掉 iot_button 回调、事件枚举与 deep sleep（时序在本项目 `poke_input.c`，
+  要能在主机侧断言）。
+- **不引入** LVGL / 音频 / 电量计，因此 `REQUIRES` 从上游一长串收敛到
+  `driver esp_lcd esp_adc`。
+
+**环境坑（本机，按踩的顺序）**
+1. **github.com 连不上**（443 超时）。ESP-IDF 与官方仓都改从 Gitee 镜像取：
+   `gitee.com/EspressifSystems/esp-idf`（v5.5.3，官方 `idf_component.yml`
+   要求 `>=5.5.3,<5.6.0`）、`gitee.com/FoloToy/ai-passport`（同 commit）、
+   子模块统一映射到 `gitee.com/esp-submodules/*`。
+2. **`esp32-wifi-lib` 在 Gitee 被 blocked（423）**，这份预编译库本机拿不到。
+   本游戏不联网：构建里用 `EXCLUDE_COMPONENTS` 排掉整条无线电链
+   （esp_wifi / esp_phy / esp_coex / bt / ieee802154 / wifi_provisioning /
+   wpa_supplicant / esp_hid / protocomm / esp_local_ctrl / openthread）。
+3. **IDF 5.5.3 的 `idf_build_process()` 不认 `COMPONENTS` 参数**：裁剪只读
+   内部变量 `__COMPONENTS`，而 `_COMPONENTS` 从未拷进去（`build.cmake`
+   里 `set(__COMPONENTS ...)` 只有追加 managed_components 那一处）。
+   于是排除列表生效了、但组件仍全部进构建。解法是在 `project()` 前直接
+   `set(__COMPONENTS "main;bsp;src;gen")`，其余交给 REQUIRES 自动展开。
+4. **配置阶段会检查所有子模块**并尝试 clone：需要
+   `IDF_SKIP_CHECK_SUBMODULES=1`（否则总是卡在缺 wifi lib 的那一步）。
+5. `install.bat` 首次在
+   `.espressif/tools/cmake/3.30.2` 上的 rename 失败（WinError 5）；删掉该残留
+   目录重跑即可。
+6. 生成的 `gen/poke_*.h` 里直接用 `NULL`，原始模板没带 `<stddef.h>`
+   （主机侧碰巧能过）。已给 7 个生成头补 `#include <stddef.h>`，并同步
+   `tools/gen_gen3_data.py`、`build_sprites_c.py`、`build_icons_c.py`。
+
+**复现命令**
+```powershell
+. C:\Users\baigu\esp\esp-idf\export.ps1
+$env:IDF_SKIP_CHECK_SUBMODULES = "1"
+idf.py -B build-fw build
+```
+
 ---
 
 *本文档由开发过程中的工作记忆汇总而成。新产生的决策、踩坑、进度请继续追加，保持「下次接手 5 分钟能进入状态」。*
